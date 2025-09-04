@@ -3,6 +3,16 @@
 
   <!-- Settings added by Evgenii-->
   <env name="GAZEBO_PLUGIN_PATH" value="/opt/ros/noetic/lib:$(optenv GAZEBO_PLUGIN_PATH)"/>
+  
+  <!-- NAV: planner args -->
+  <arg name="frame_id"            default="map"/>
+  <arg name="waypoints_file"      default="$(find gem_gazebo)/config/track_waypoints.csv"/>
+  <arg name="start_radius"        default="2.0"/>   <!-- meters: distance «ready to start» near of the first waypoint -->
+  <arg name="goal_radius"         default="2.0"/>   <!-- meters: path finished radius -->
+  <arg name="start_speed_thresh"  default="0.2"/>   <!-- meters/sec: stay before start -->
+  <arg name="stop_at_goal"        default="true"/>
+  <arg name="pose_topic"          default="/$(arg robot_name)/odom"/>
+  
    
   <arg name="controller" default="pure_pursuit"/>
   <arg name="output_cmd_topic" default="/gem/ackermann_cmd"/>
@@ -91,6 +101,23 @@
     
     
     
+    
+    
+    
+    <!-- NAV: Task Planner -->
+    <node pkg="gem_nav" type="task_planner.py" name="task_planner" output="screen">
+      <param name="frame_id"           value="$(arg frame_id)"/>
+      <param name="waypoints_file"     value="$(arg waypoints_file)"/>
+      <param name="start_radius"       value="$(arg start_radius)"/>
+      <param name="goal_radius"        value="$(arg goal_radius)"/>
+      <param name="start_speed_thresh" value="$(arg start_speed_thresh)"/>
+      <param name="stop_at_goal"       value="$(arg stop_at_goal)"/>
+      <param name="pose_topic"         value="$(arg pose_topic)"/>
+    </node>
+    
+    
+    
+    
     <!-- Supervisor: aggregate  sensors and publish robot_state + safety/stop -->
     <node pkg="gem_core" type="supervisor.py" name="gem_supervisor" output="screen">
       <!-- Settings -->
@@ -101,6 +128,17 @@
       <param name="net_timeout_disconnected_s" value="10.0"/>
       <param name="net_timeout_low_s" value="20.0"/>
       <param name="cmd_activity_topic" value="$(arg output_cmd_topic)"/>
+    </node>
+    
+    <!-- NAV: Pure Pursuit (with new interface) -->
+    <node pkg="gem_core" type="pure_pursuit.py" name="pure_pursuit" output="screen">
+      <!-- controller params -->
+      <rosparam param="lookahead">3.0</rosparam>
+
+      <!--  remaps to GLOBAL topics -->
+      <remap from="cmd"    to="/pure_pursuit/cmd"/>
+      <remap from="path"   to="/pure_pursuit/path"/>
+      <remap from="enable" to="/pure_pursuit/enable"/>
     </node>
 
     <!-- Mux: chosing of active path-tracking controller -->
