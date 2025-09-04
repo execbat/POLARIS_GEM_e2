@@ -115,6 +115,7 @@
     
     <node pkg="gem_core" type="health_sim.py" name="health_sim" output="screen"/>
     
+    <!--
     <node pkg="gem_gazebo" type="gem_control.py" name="ackermann_controller_gem" output="screen">
       <param name="battery_min_pct" value="50.0"/>
       <param name="temp_max_c" value="55.0"/>
@@ -130,6 +131,7 @@
       <param name="gps_acc_topic"    value="/gps/hacc_mm"/>
       <param name="net_signal_topic" value="/net/signal"/>
     </node>
+    -->
 
       
   </group> 
