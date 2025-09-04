@@ -2,8 +2,10 @@ cmake_minimum_required(VERSION 3.0.2)
 project(gem_core)
 
 find_package(catkin REQUIRED COMPONENTS
+  roscpp
   rospy
   std_msgs
+  geometry_msgs
   sensor_msgs
   diagnostic_msgs
   ackermann_msgs
@@ -18,11 +20,11 @@ add_message_files(
 
 generate_messages(
   DEPENDENCIES
-  std_msgs
+  std_msgs geometry_msgs diagnostic_msgs 
 )
 
 catkin_package(
-  CATKIN_DEPENDS rospy std_msgs sensor_msgs diagnostic_msgs ackermann_msgs message_runtime
+  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs sensor_msgs diagnostic_msgs ackermann_msgs message_runtime
 )
 
 catkin_install_python(PROGRAMS
