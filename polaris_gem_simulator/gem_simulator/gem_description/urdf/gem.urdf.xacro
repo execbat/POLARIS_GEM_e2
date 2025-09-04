@@ -10,6 +10,7 @@
 
   <xacro:arg name="velodyne_points" default="false"/>
   <xacro:arg name="laser_points" default="false"/>
+  <xacro:arg name="robotname" default="gem"/>
 
   <xacro:property name="velodyne_points" value="$(arg velodyne_points)"/>
   <xacro:property name="laser_points" value="$(arg laser_points)"/>
