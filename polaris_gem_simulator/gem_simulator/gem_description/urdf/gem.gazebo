@@ -1,5 +1,6 @@
 <?xml version="1.0" ?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="robotname" default="gem"/>
 
   <!-- ######################################################################### -->
 
@@ -195,7 +196,7 @@
     <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
       <legacyModeNS>true</legacyModeNS>
       <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>
-      <robotNamespace>$(arg robotname)</robotNamespace>
+      <robotNamespace>/$(arg robotname)</robotNamespace>
     </plugin>
   </gazebo>
 
