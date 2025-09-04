@@ -1,6 +1,10 @@
 <?xml version="1.0"?>
 <launch>
 
+  <!-- Settings added by Evgenii-->
+  <arg name="controller" default="pure_pursuit"/>
+  <arg name="output_cmd_topic" default="/gem/ackermann_cmd"/>
+  
   <!-- Gazebo settings -->
   <arg name="cmd_timeout" default="1.0"/>
   <arg name="paused" default="false"/>
@@ -78,6 +82,38 @@
     <node name="gem_cmdvel_$(arg robot_name)" pkg="gem_gazebo" type="gem_cmdvel.py" />
     
     <node if="$(arg use_rviz)" name="rviz_$(arg robot_name)" pkg="rviz" type="rviz" args="-d $(find gem_description)/config_rviz/gem_gazebo_rviz.rviz" />
+    
+    
+    
+    
+    
+    
+    <!-- Supervisor: aggregate  sensors and publish robot_state + safety/stop -->
+    <node pkg="gem_core" type="supervisor.py" name="gem_supervisor" output="screen">
+      <!-- place to read Health-->
+      <remap from="health" to="/gem/health"/>
+      <!-- Settings -->
+      <param name="battery_thresh_pct" value="50.0"/>
+      <param name="temp_thresh_c" value="55.0"/>
+      <param name="gps_hacc_thresh_mm" value="200.0"/>
+      <param name="gps_timeout_bad_s" value="15.0"/>
+      <param name="net_timeout_disconnected_s" value="10.0"/>
+      <param name="net_timeout_low_s" value="20.0"/>
+      <param name="cmd_activity_topic" value="$(arg output_cmd_topic)"/>
+    </node>
+
+    <!-- Mux: chosing of active path-tracking controller -->
+    <node pkg="gem_core" type="controller_mux.py" name="controller_mux" output="screen">
+      <param name="output_cmd_topic" value="$(arg output_cmd_topic)"/>
+      <param name="default_controller" value="$(arg controller)"/>
+      <rosparam param="inputs">
+        pure_pursuit: "/pure_pursuit/cmd"
+        stanley:      "/stanley/cmd"
+        # mpc:        "/mpc/cmd"   
+      </rosparam>
+    </node>
+    
+    <node pkg="gem_core" type="health_sim.py" name="health_sim" output="screen"/>
 
       
   </group> 

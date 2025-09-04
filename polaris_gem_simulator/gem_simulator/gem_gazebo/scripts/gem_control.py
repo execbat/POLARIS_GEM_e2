@@ -22,8 +22,10 @@ import tf2_ros
 import rospy
 
 from ackermann_msgs.msg import AckermannDrive
-from std_msgs.msg import Float64
+from std_msgs.msg import Float64, Bool, Int32, String, Float32
 from controller_manager_msgs.srv import ListControllers
+from sensor_msgs.msg import BatteryState, Temperature
+
 
 
 PI = 3.141592653589739
@@ -106,27 +108,72 @@ class GEMController(object):
         self.right_front_wheel_pub = right_front_wheel_pub
         self.left_rear_wheel_pub   = left_rear_wheel_pub
         self.right_rear_wheel_pub  = right_rear_wheel_pub
+        
+        # added by Evgenii
+        self.safety_stop = False
+                
+        # --- vehicle state and tresholds ---
+        self.state = "IDLE"
+        self.state_pub = rospy.Publisher("vehicle_state", String, queue_size=1, latch=True)
+        self.state_pub.publish(String(self.state))
+
+        self.batt_min_pct       = float(rospy.get_param("~battery_min_pct", 50.0))   # %
+        self.temp_max_c         = float(rospy.get_param("~temp_max_c", 55.0))        # temperature
+        self.gps_acc_thresh_mm  = float(rospy.get_param("~gps_acc_thresh_mm", 200.0))# mm
+        self.gps_bad_timeout    = float(rospy.get_param("~gps_bad_timeout", 15.0))   # sec
+        self.net_timeout_none   = float(rospy.get_param("~net_timeout_none", 10.0))  # sec (0 = not connected)
+        self.net_timeout_low    = float(rospy.get_param("~net_timeout_low", 20.0))   # sec (2 = low)
+        self.idle_speed_eps     = float(rospy.get_param("~idle_speed_eps", 0.05))    # m/sec
+
+        # sensor values and "last time of the GOOD state"
+        self.battery_pct  = None        # %
+        self.temp_c       = None        # temperature
+        self.gps_acc_mm   = None        # mm
+        self.net_signal   = 1           # 0/1/2
+        self.last_good_gps = rospy.get_time()
+        self.last_good_net = rospy.get_time()
+
+        # Topics 
+        e_stop_topic      = rospy.get_param("~e_stop_topic", "/safety/stop")
+        battery_topic     = rospy.get_param("~battery_topic", "/battery_state")
+        temp_topic        = rospy.get_param("~temp_topic", "/temperature")
+        gps_acc_topic     = rospy.get_param("~gps_acc_topic", "/gps/hacc_mm")
+        net_signal_topic  = rospy.get_param("~net_signal_topic", "/net/signal")
+
+        # Subscribes
+        rospy.Subscriber(e_stop_topic, Bool, self._on_stop, queue_size=1)
+        rospy.Subscriber(battery_topic,  BatteryState,  self._on_battery, queue_size=1)
+        rospy.Subscriber(temp_topic,     Temperature,   self._on_temp,    queue_size=1)
+        rospy.Subscriber(gps_acc_topic,  Float32,       self._on_gps_acc, queue_size=1)
+        rospy.Subscriber(net_signal_topic, Int32,       self._on_signal,  queue_size=1)
 
     def loop_body(self, curr_t):
         delta_t = curr_t - self.prev_t  # Calculate delta_t first
-        self.prev_t = curr_t
-        if self.cmd_timeout > 0.0 and (curr_t - self.last_cmd_time > self.cmd_timeout):
+        self.prev_t = curr_t        
 
-            steer_ang_changed, center_y = self.control_steering(self.last_steer_ang, 0.0, 0.001)
+        # updating state, and with ERROR state, force everything to stop
+        if self._update_state_and_check_error(curr_t):
+            # forced stop - publishing zeros
+            self.theta_left = 0.0
+            self.theta_right = 0.0
+            self.left_front_ang_vel = 0.0
+            self.right_front_ang_vel = 0.0
+            self.left_rear_ang_vel = 0.0
+            self.right_rear_ang_vel = 0.0
+        else:   
+            if self.cmd_timeout > 0.0 and (curr_t - self.last_cmd_time > self.cmd_timeout):
+                steer_ang_changed, center_y = self.control_steering(self.last_steer_ang, 0.0, 0.001)
+                self.control_wheels(0.0, 0.0, 0.0, steer_ang_changed, center_y)
 
-            self.control_wheels(0.0, 0.0, 0.0, steer_ang_changed, center_y)
+            elif delta_t > 0.0:
+                with self.ackermann_cmd_lock:
+                    steer_ang     = self.steer_ang
+                    steer_ang_vel = self.steer_ang_vel
+                    speed         = self.speed
+                    accel         = self.accel
 
-        elif delta_t > 0.0:
-
-            with self.ackermann_cmd_lock:
-                steer_ang     = self.steer_ang
-                steer_ang_vel = self.steer_ang_vel
-                speed         = self.speed
-                accel         = self.accel
-
-            steer_ang_changed, center_y = self.control_steering(steer_ang, steer_ang_vel, delta_t)
-
-            self.control_wheels(speed, accel, delta_t, steer_ang_changed, center_y)
+                steer_ang_changed, center_y = self.control_steering(steer_ang, steer_ang_vel, delta_t)
+                self.control_wheels(speed, accel, delta_t, steer_ang_changed, center_y)
 
         self.left_steer_pub.publish(self.theta_left)
         self.right_steer_pub.publish(self.theta_right)
@@ -145,6 +192,10 @@ class GEMController(object):
 
     def ackermann_callback(self, ackermann_cmd):
         self.last_cmd_time = rospy.get_time()
+        
+        if self.state == "ERROR" or self.safety_stop:
+            return
+            
         with self.ackermann_cmd_lock:
             self.steer_ang = ackermann_cmd.steering_angle
             self.steer_ang_vel = ackermann_cmd.steering_angle_velocity
@@ -172,6 +223,8 @@ class GEMController(object):
         return steer_ang_changed, center_y
 
     def control_wheels(self, speed, accel_limit, delta_t, steer_ang_changed, center_y):
+        eps = 1e-6
+    
 
         if accel_limit > 0.0:
             self.last_accel_limit = accel_limit
@@ -186,15 +239,80 @@ class GEMController(object):
             self.last_speed = veh_speed
             left_dist = center_y - self.steer_joint_dist_div_2
             right_dist = center_y + self.steer_joint_dist_div_2
-            gain = (2 * PI) * veh_speed / abs(center_y)
+            gain = (2 * PI) * veh_speed / max(abs(center_y), eps)
             r = math.sqrt(left_dist ** 2 + self.wheelbase_sqr)
             self.left_front_ang_vel = gain * r * self.left_front_inv_circ
             r = math.sqrt(right_dist ** 2 + self.wheelbase_sqr)
             self.right_front_ang_vel = gain * r * self.right_front_inv_circ
-            gain = (2 * PI) * veh_speed / center_y
+            gain = (2 * PI) * veh_speed / max(center_y, eps if center_y >=0 else -eps)
             self.left_rear_ang_vel = gain * left_dist * self.left_rear_inv_circ
             self.right_rear_ang_vel = gain * right_dist * self.right_rear_inv_circ
+            
+    # added by Evgenii        
+    def _on_stop(self, msg: Bool):
+        self.safety_stop = bool(msg.data)
 
+    def _on_battery(self, msg: BatteryState):
+        # BatteryState.percentage 
+        pct = float(msg.percentage)
+        self.battery_pct = pct*100.0 if pct <= 1.0 else pct
+
+    def _on_temp(self, msg: Temperature):
+        self.temp_c = float(msg.temperature)
+
+    def _on_gps_acc(self, msg: Float32):
+        # horizontal accuracy in mm
+        self.gps_acc_mm = float(msg.data)
+
+    def _on_signal(self, msg: Int32):
+        # 0 = not connected, 1 = connected, 2 = low
+        self.net_signal = int(msg.data)
+         
+    def _update_state_and_check_error(self, curr_t: float) -> bool:
+        error = False
+
+        # e-stop 
+        if self.safety_stop:
+            error = True
+
+        # battery
+        if self.battery_pct is not None and self.battery_pct <= self.batt_min_pct:
+            error = True
+    
+        # temperature
+        if self.temp_c is not None and self.temp_c >= self.temp_max_c:
+            error = True
+
+        # GPS:  "good" if accuracy <= theshold; else going into ERROR state after timeout
+        if self.gps_acc_mm is not None:
+            if self.gps_acc_mm <= self.gps_acc_thresh_mm:
+                self.last_good_gps = curr_t
+            elif (curr_t - self.last_good_gps) >= self.gps_bad_timeout:
+                error = True
+
+        # Internet: 1 — good. 0 и 2 — calc with timeouts
+        if self.net_signal == 1:
+            self.last_good_net = curr_t
+        elif self.net_signal == 0:
+            if (curr_t - self.last_good_net) >= self.net_timeout_none:
+                error = True
+        elif self.net_signal == 2:
+            if (curr_t - self.last_good_net) >= self.net_timeout_low:
+                error = True
+
+        # calc new state
+        new_state = self.state
+        if error:
+            new_state = "ERROR"
+        else:
+            idle = abs(self.last_speed) <= self.idle_speed_eps and (curr_t - self.last_cmd_time) > 1.0
+            new_state = "IDLE" if idle else "RUNNING"
+
+        if new_state != self.state:
+            self.state = new_state
+            self.state_pub.publish(String(self.state))
+
+        return error
 
 def _vector3_to_numpy(msg) -> np.ndarray:
     return np.array([msg.x, msg.y, msg.z])
