@@ -2,6 +2,16 @@
 
 <robot name="$(arg robotname)" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+  <gazebo>
+    <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
+    <!-- params -->
+      <robotNamespace>/gem</robotNamespace>
+      <robotParam>/gem/robot_description</robotParam>
+      <legacyModeNS>true</legacyModeNS>
+      <controlPeriod>0.001</controlPeriod>
+    </plugin>
+  </gazebo>
+
   <xacro:property name="steer_angle" value="0.61"/>
   <xacro:property name="PI" value="3.1415926835897931"/>
 

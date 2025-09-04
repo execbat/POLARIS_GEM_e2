@@ -53,7 +53,7 @@
   
     <!-- Robot name is Gazebo, currently is only "gem" -->
     <node name="spawn_model_$(arg robot_name)" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
-          args="-param robot_description -model $(arg robot_name) -urdf $(arg init_pose)"/>
+          args="-param robot_description -model $(arg robot_name) -urdf $(arg init_pose) -robot_namespace /$(arg robot_name)"/>
     
     <!-- Load joint controller configurations from YAML file to parameter server -->
     <rosparam file="$(find gem_gazebo)/config/gem_joint_control_params.yaml" command="load" ns="/$(arg robot_name)"/>
