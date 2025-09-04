@@ -188,6 +188,7 @@
     <material>Gazebo/Red</material>
   </gazebo>
 
+  <!--
   <gazebo>
     <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
       <legacyModeNS>true</legacyModeNS>
@@ -195,6 +196,7 @@
       <robotNamespace>$(arg robotname)</robotNamespace>
     </plugin>
   </gazebo>
+  -->
 
 
   <!-- ***************************** camera ***************************** -->

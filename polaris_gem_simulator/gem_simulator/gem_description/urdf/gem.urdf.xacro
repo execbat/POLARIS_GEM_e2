@@ -8,6 +8,7 @@
       <robotNamespace>/gem</robotNamespace>
       <robotParam>/gem/robot_description</robotParam>
       <legacyModeNS>true</legacyModeNS>
+      <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>
       <controlPeriod>0.001</controlPeriod>
     </plugin>
   </gazebo>
