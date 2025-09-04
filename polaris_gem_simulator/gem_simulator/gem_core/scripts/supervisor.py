@@ -21,6 +21,12 @@ class Supervisor:
         self.net_timeout0_s = rospy.get_param("~net_timeout_disconnected_s", 10.0)
         self.net_timeout2_s = rospy.get_param("~net_timeout_low_s", 20.0)
         self.gps_timeout_s  = rospy.get_param("~gps_timeout_bad_s", 15.0)
+        # Timers of "Bad" conditions. Used for timeouts
+        self.bad_since = {
+            "gps": None,        # condition: gps_hacc_mm < 200
+            "net0": None,       # internet_status == 0
+            "net2": None,       # internet_status == 2
+        }
 
         # Inspection of the cmd to detect IDLE/RUNNING
         self.cmd_topic = rospy.get_param("~cmd_activity_topic", "/gem/ackermann_cmd")
@@ -41,12 +47,7 @@ class Supervisor:
         self.health = Health()
         self.last_cmd_time = rospy.Time(0)
 
-        # Timers of "Bad" conditions. Used for timeouts
-        self.bad_since = {
-            "gps": None,        # condition: gps_hacc_mm < 200
-            "net0": None,       # internet_status == 0
-            "net2": None,       # internet_status == 2
-        }
+
 
         self.timer = rospy.Timer(rospy.Duration(0.1), self.tick)
 
