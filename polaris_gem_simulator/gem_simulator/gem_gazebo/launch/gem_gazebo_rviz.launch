@@ -2,6 +2,9 @@
 <launch>
 
   <!-- Settings added by Evgenii-->
+  <env name="GAZEBO_PLUGIN_PATH" value="/opt/ros/noetic/lib:$(optenv GAZEBO_PLUGIN_PATH)"/>
+  <arg name="verbose" default="true"/>
+  
   <arg name="controller" default="pure_pursuit"/>
   <arg name="output_cmd_topic" default="/gem/ackermann_cmd"/>
   
