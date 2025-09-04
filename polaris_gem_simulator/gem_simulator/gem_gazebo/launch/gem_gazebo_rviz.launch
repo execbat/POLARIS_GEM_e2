@@ -90,7 +90,7 @@
     
     
     <!-- Supervisor: aggregate  sensors and publish robot_state + safety/stop -->
-    <node pkg="gem_core" type="supervisor.py" name="gem_supervisor_$(arg robot_name)" output="screen">
+    <node pkg="gem_core" type="supervisor.py" name="gem_supervisor" output="screen">
       <!-- Settings -->
       <param name="battery_thresh_pct" value="50.0"/>
       <param name="temp_thresh_c" value="55.0"/>
@@ -102,7 +102,7 @@
     </node>
 
     <!-- Mux: chosing of active path-tracking controller -->
-    <node pkg="gem_core" type="controller_mux.py" name="controller_mux_$(arg robot_name)" output="screen">
+    <node pkg="gem_core" type="controller_mux.py" name="controller_mux" output="screen">
       <param name="output_cmd_topic" value="$(arg output_cmd_topic)"/>
       <param name="default_controller" value="$(arg controller)"/>
       <rosparam param="inputs">
@@ -112,7 +112,7 @@
       </rosparam>
     </node>
     
-    <node pkg="gem_core" type="health_sim.py" name="health_sim_$(arg robot_name)" output="screen"/>
+    <node pkg="gem_core" type="health_sim.py" name="health_sim" output="screen"/>
     
     <!--
     <node pkg="gem_gazebo" type="gem_control.py" name="ackermann_controller_gem" output="screen">
