@@ -128,10 +128,6 @@
     <material>Gazebo/White</material>
   </gazebo>
 
-  <gazebo reference="front_left_head_light_link">
-    <material>Gazebo/White</material>
-  </gazebo>
-
   <gazebo reference="front_left_turn_light_link">
     <material>Gazebo/Orange</material>
   </gazebo>
@@ -196,7 +192,7 @@
     <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
       <legacyModeNS>true</legacyModeNS>
       <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>
-      <robotNamespace>/$(arg robotname)</robotNamespace>
+      <robotNamespace>$(arg robotname)</robotNamespace>
     </plugin>
   </gazebo>
 
