@@ -114,6 +114,22 @@
     </node>
     
     <node pkg="gem_core" type="health_sim.py" name="health_sim" output="screen"/>
+    
+    <node pkg="gem_gazebo" type="gem_control.py" name="ackermann_controller_gem" output="screen">
+      <param name="battery_min_pct" value="50.0"/>
+      <param name="temp_max_c" value="55.0"/>
+      <param name="gps_acc_thresh_mm" value="200.0"/>
+      <param name="gps_bad_timeout" value="15.0"/>
+      <param name="net_timeout_none" value="10.0"/>
+      <param name="net_timeout_low"  value="20.0"/>
+      <param name="idle_speed_eps"   value="0.05"/>
+
+      <param name="e_stop_topic"     value="/safety/stop"/>
+      <param name="battery_topic"    value="/battery_state"/>
+      <param name="temp_topic"       value="/temperature"/>
+      <param name="gps_acc_topic"    value="/gps/hacc_mm"/>
+      <param name="net_signal_topic" value="/net/signal"/>
+    </node>
 
       
   </group> 
