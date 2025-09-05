@@ -78,7 +78,7 @@ class VisionLKA:
 
         # Fusion weights and yellow fallback offset
         # Fixed pixel offset from the left yellow edge to our lane center
-        self.offset_from_yellow_px = rospy.get_param("~offset_from_yellow_px", 160.0)
+        self.offset_from_yellow_px = rospy.get_param("~offset_from_yellow_px", 200.0)
         self.edges_weight = rospy.get_param("~edges_weight", 0.55)   # both borders (primary)
         self.mid_weight   = rospy.get_param("~mid_weight",   0.60)   # dashed white near image center
         self.yellow_weight= rospy.get_param("~yellow_weight",0.01)   # yellow fallback (secondary)
