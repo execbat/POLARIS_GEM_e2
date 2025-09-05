@@ -1,340 +1,286 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Vision-based lane keeping for Gazebo GEM car (ROS1, Noetic).
-
-Key ideas:
-- Trapezoid ROI anchors detection to the road area in front of the car.
-- Color pre-mask (white/yellow) + Canny edges -> clean lane mask for Gazebo textures.
-- Multi-row scanning finds lane centers; weighted average prefers lower rows (closer).
-- Heading (slope) from a linear fit through those centers.
-- PD on lateral error + heading term => steering.
-- Green-balance fallback: if no clear lines, balance green areas left/right to keep center.
-- Soft hold of last command for brief dropouts. Obeys /gem/safety/stop.
-
-Topics (relative):
-  Sub:  "image"  (sensor_msgs/Image)  -> remap to /gem/front_single_camera/image_raw
-        "/gem/safety/stop" (std_msgs/Bool)
-  Pub:  "cmd"    (ackermann_msgs/AckermannDrive)
-        "lateral_error" (std_msgs/Float32)
-        "debug"  (sensor_msgs/Image)
-"""
-import math
-import numpy as np
-import cv2
-import rospy
+import rospy, cv2, numpy as np, math
 from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDrive
 from std_msgs.msg import Float32, Bool
 from cv_bridge import CvBridge
+from math import exp
 
-
-def clamp(v, lo, hi):
-    return lo if v < lo else hi if v > hi else v
-
+def clamp(v, lo, hi): 
+    return lo if v < lo else (hi if v > hi else v)
 
 class VisionLKA:
+    """
+    Vision-based lane keeping with robust smoothing:
+    - Multi-row scan to estimate lane center.
+    - LPF on error and steering.
+    - Steering slew-rate limit.
+    - Speed scheduling vs steering magnitude.
+    - Tiny optional integral with anti-windup.
+    - Safe fallback when lane is not visible.
+    """
+
     def __init__(self):
         rospy.init_node("vision_lka")
         self.bridge = CvBridge()
 
-        # ======= CONTROL/GATING PARAMS =======
-        self.target_speed   = rospy.get_param("~target_speed", 1.5)
-        self.min_speed      = rospy.get_param("~min_speed",    0.7)
-        self.kp             = rospy.get_param("~kp",           0.70)
-        self.kd             = rospy.get_param("~kd",           0.10)
-        self.k_heading      = rospy.get_param("~k_heading",    0.45)
-        self.steer_limit    = rospy.get_param("~steer_limit",  0.60)
-        self.steer_slowdown = rospy.get_param("~steer_slowdown", 0.65)
-        self.invert_steer   = rospy.get_param("~invert_steer", True)
+        # ---------- Control gains (conservative baseline) ----------
+        self.kp           = rospy.get_param("~kp", 0.35)     # main proportional gain (on normalized lateral error)
+        self.kd           = rospy.get_param("~kd", 0.10)     # derivative gain (on filtered error)
+        self.ki           = rospy.get_param("~ki", 0.00)     # <= keep near 0 to avoid windup for now
+        self.k_heading    = rospy.get_param("~k_heading", 0.10)  # heading (lane tilt) weight, modest
 
-        # ======= ROI (TRAPEZOID) =======
-        # Top/bottom in fraction of image height (0..1), top width fraction (0..1)
-        self.roi_y_top          = rospy.get_param("~roi_y_top", 0.52)
-        self.roi_y_bot          = rospy.get_param("~roi_y_bot", 1.00)
-        self.roi_top_width_frac = rospy.get_param("~roi_top_width_frac", 0.65)
+        # ---------- Steering limits & smoothing ----------
+        self.steer_limit      = rospy.get_param("~steer_limit", 0.60)   # [rad] abs steering cap
+        self.steer_rate_limit = rospy.get_param("~steer_rate_limit", 0.8) # [rad/s] max change per second
+        self.err_lpf_tau      = rospy.get_param("~err_lpf_tau", 0.25)   # [s] error LPF time constant
+        self.steer_lpf_tau    = rospy.get_param("~steer_lpf_tau", 0.15) # [s] steering LPF time constant
+        self.err_deadband     = rospy.get_param("~err_deadband", 0.03)  # normalized error deadband
 
-        # ======= COLOR MASK (WHITE/YELLOW) + CANNY =======
-        self.blur_ksize  = rospy.get_param("~blur_ksize", 5)     # odd
-        self.canny_low   = rospy.get_param("~canny_low",  40)
-        self.canny_high  = rospy.get_param("~canny_high", 120)
-        # HSV white/yellow thresholds (tuned for Gazebo road/lines)
-        self.white_v_min = rospy.get_param("~white_v_min", 180)  # V >=
-        self.white_s_max = rospy.get_param("~white_s_max", 60)   # S <=
-        self.yellow_h_lo = rospy.get_param("~yellow_h_lo", 15)
-        self.yellow_h_hi = rospy.get_param("~yellow_h_hi", 40)
-        self.yellow_s_min= rospy.get_param("~yellow_s_min", 80)
-        self.yellow_v_min= rospy.get_param("~yellow_v_min", 80)
+        # ---------- Speed scheduling vs steering ----------
+        self.target_speed     = rospy.get_param("~target_speed", 1.30)  # [m/s] nominal cruise
+        self.min_speed        = rospy.get_param("~min_speed", 0.60)     # [m/s] min when turning hard
+        self.slowdown_gain    = rospy.get_param("~steer_slowdown", 0.80) # 0..1 how strong to reduce by |steer|
+        self.slowdown_pow     = rospy.get_param("~slowdown_pow", 1.2)
 
-        # ======= SCAN GEOMETRY =======
-        # Row positions are relative to ROI height
-        self.scan_rows       = rospy.get_param("~scan_rows", [0.60, 0.72, 0.84, 0.92, 0.97])
-        self.min_valid_rows  = rospy.get_param("~min_valid_rows", 2)
-        self.min_lane_w_px   = rospy.get_param("~min_lane_width_px", 22)
-        self.min_mask_area   = rospy.get_param("~min_mask_area", 150)
-        self.y_eval_frac     = rospy.get_param("~y_eval_frac", 0.95)   # bottom fraction for center eval
-        # Estimated lane width as fraction of image width (used when only one edge visible)
-        self.lane_width_frac = rospy.get_param("~lane_width_frac", 0.52)
+        # ---------- Lane detection (ROI + color masks) ----------
+        # ROI trapezoid (bottom = full width, top = fraction), starts at roi_y_top*H
+        self.roi_y_top        = rospy.get_param("~roi_y_top", 0.58)     # 0..1 from top
+        self.roi_top_width    = rospy.get_param("~roi_top_width_frac", 0.75) # fraction of width at ROI top
 
-        # ======= GREEN-BALANCE FALLBACK =======
-        self.use_green_balance = rospy.get_param("~use_green_balance", True)
-        self.green_h_lo   = rospy.get_param("~green_h_lo", 30)
-        self.green_h_hi   = rospy.get_param("~green_h_hi", 95)
-        self.green_s_min  = rospy.get_param("~green_s_min", 60)
-        self.green_v_min  = rospy.get_param("~green_v_min", 20)
-        self.min_green_cols= rospy.get_param("~min_green_cols", 200)  # min green pixels in ROI to trust fallback
+        # Multi-scan rows (relative to ROI height)
+        self.scan_rows        = rospy.get_param("~scan_rows", [0.60, 0.72, 0.84, 0.92])
+        self.min_mask_px      = rospy.get_param("~min_mask_px", 150)
+        self.min_lane_w       = rospy.get_param("~min_lane_width_px", 22)
+        self.min_valid_rows   = rospy.get_param("~min_valid_rows", 2)
 
-        # ======= DROP-OUT HANDLING =======
-        self.hold_bad_ms  = rospy.get_param("~hold_bad_ms", 350)  # hold last cmd for brief blank frames
+        # HSV/HLS/LAB thresholds (whites/yellows)
+        self.white_s_max      = rospy.get_param("~white_s_max", 70)     # HSV S <=
+        self.white_v_min      = rospy.get_param("~white_v_min", 165)    # HSV V >=
+        self.hls_L_min        = rospy.get_param("~hls_L_min", 190)      # HLS L >=
+        self.lab_b_min        = rospy.get_param("~lab_b_min", 140)      # LAB b >= (yellow)
+        self.morph_k          = rospy.get_param("~morph_kernel", 5)     # morphology kernel
+        self.canny_low        = rospy.get_param("~canny_low", 30)       # optional edges assist
+        self.canny_high       = rospy.get_param("~canny_high", 100)
 
-        # ======= DEBUG =======
-        self.debug_overlay = rospy.get_param("~debug_overlay", True)
+        # Behavior when lane lost
+        self.hold_bad_ms      = rospy.get_param("~hold_bad_ms", 400)    # ms to hold last command before stopping
+        self.invert_steer     = rospy.get_param("~invert_steer", True) # flip sign if steering polarity is opposite
 
-        # ======= STATE =======
-        self.prev_err     = 0.0
-        self.prev_t       = rospy.get_time()
-        self.last_ok_time = rospy.Time(0.0)
-        self.last_center  = None  # px
-        self.last_cmd     = AckermannDrive()
+        # ---------- State ----------
         self.estop        = False
+        self.e_filt       = 0.0    # filtered error
+        self.e_int        = 0.0    # integral term
+        self.last_t       = rospy.get_time()
+        self.steer_filt   = 0.0    # filtered steering
+        self.last_cmd     = AckermannDrive()
+        self.last_ok_time = rospy.Time(0)
 
-        # ======= IO =======
+        # ---------- IO ----------
         self.pub_cmd = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
         self.pub_err = rospy.Publisher("lateral_error", Float32, queue_size=10)
         self.pub_dbg = rospy.Publisher("debug", Image, queue_size=1)
         rospy.Subscriber("image", Image, self.on_image, queue_size=1)
         rospy.Subscriber("/gem/safety/stop", Bool, self.on_stop, queue_size=1)
 
-        rospy.loginfo("vision_lka: ROI[y=%.2f..%.2f, top_w=%.2f] Canny[%d,%d] "
-                      "white(V>=%d,S<=%d) yellow(H=%d..%d,S>=%d,V>=%d) scans=%s "
-                      "lane_w_frac=%.2f kp=%.2f kd=%.2f kh=%.2f steer_lim=%.2f inv=%s",
-                      self.roi_y_top, self.roi_y_bot, self.roi_top_width_frac,
-                      self.canny_low, self.canny_high,
-                      self.white_v_min, self.white_s_max,
-                      self.yellow_h_lo, self.yellow_h_hi, self.yellow_s_min, self.yellow_v_min,
-                      str(self.scan_rows), self.lane_width_frac,
-                      self.kp, self.kd, self.k_heading, self.steer_limit, self.invert_steer)
+        rospy.loginfo("LKA init: KP=%.2f KD=%.2f KI=%.3f KH=%.2f | steer_lim=%.2f rate=%.2f | "
+                      "err_tau=%.2f steer_tau=%.2f deadband=%.2f | v=%.2f..%.2f slow(%.2f,pow=%.2f) | "
+                      "ROI(y=%.2f, top=%.2f) rows=%s",
+                      self.kp, self.kd, self.ki, self.k_heading,
+                      self.steer_limit, self.steer_rate_limit,
+                      self.err_lpf_tau, self.steer_lpf_tau, self.err_deadband,
+                      self.min_speed, self.target_speed, self.slowdown_gain, self.slowdown_pow,
+                      self.roi_y_top, self.roi_top_width, str(self.scan_rows))
 
-    # ---------- callbacks ----------
+    # -------------------- Callbacks --------------------
+
     def on_stop(self, msg: Bool):
         self.estop = bool(msg.data)
 
-    def publish_cmd(self, speed, steer):
-        if self.estop:
-            speed = 0.0
-            steer = 0.0
-        if self.invert_steer:
-            steer = -steer
-        cmd = AckermannDrive()
-        cmd.speed = float(max(0.0, speed))
-        cmd.steering_angle = float(clamp(steer, -self.steer_limit, self.steer_limit))
-        self.pub_cmd.publish(cmd)
-        self.last_cmd = cmd
-
     def on_image(self, msg: Image):
-        # 0) Convert
+        # Time & dt
+        t = rospy.get_time()
+        dt = max(1e-3, t - self.last_t)
+        self.last_t = t
+
+        # 1) Convert image and build trapezoid ROI
         try:
             bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as e:
-            rospy.logwarn_throttle(2.0, "cv_bridge: %s", e)
+            rospy.logwarn_throttle(2.0, "cv_bridge error: %s", e)
             return
 
         H, W = bgr.shape[:2]
-        # 1) ROI trapezoid
-        y_top = int(H * self.roi_y_top)
-        y_bot = int(H * self.roi_y_bot)
-        top_w = int(W * self.roi_top_width_frac)
-        x_left_top  = (W - top_w) // 2
-        x_right_top = x_left_top + top_w
-        roi_poly = np.array([[0, y_bot],
-                             [W, y_bot],
-                             [x_right_top, y_top],
-                             [x_left_top,  y_top]], dtype=np.int32)
-        roi_mask = np.zeros((H, W), dtype=np.uint8)
-        cv2.fillConvexPoly(roi_mask, roi_poly, 255)
+        y0 = int(self.roi_y_top * H)
+        if y0 >= H-2: y0 = max(0, H-2)
+        roi_h = H - y0
 
-        # 2) Color pre-mask (white+yellow)
-        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        white_mask = cv2.inRange(hsv,
-                                 (0, 0, self.white_v_min),
-                                 (179, self.white_s_max, 255))
-        yellow_mask = cv2.inRange(hsv,
-                                  (self.yellow_h_lo, self.yellow_s_min, self.yellow_v_min),
-                                  (self.yellow_h_hi, 255, 255))
-        color_mask = cv2.bitwise_or(white_mask, yellow_mask)
-        color_mask = cv2.bitwise_and(color_mask, roi_mask)
+        # trapezoid mask: top width fraction, bottom full width
+        top_w = int(self.roi_top_width * W)
+        l_top = (W - top_w) // 2
+        r_top = l_top + top_w
+        trapezoid = np.array([[0, roi_h-1],
+                              [W-1, roi_h-1],
+                              [r_top, 0],
+                              [l_top, 0]], dtype=np.int32)
 
-        # 3) Canny on gray, gated by color mask (more robust in Gazebo)
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        if self.blur_ksize >= 3 and self.blur_ksize % 2 == 1:
-            gray = cv2.GaussianBlur(gray, (self.blur_ksize, self.blur_ksize), 0)
-        edges = cv2.Canny(gray, self.canny_low, self.canny_high)
-        edges = cv2.bitwise_and(edges, color_mask)
+        roi_full = bgr[y0:H, :]
+        roi = np.zeros_like(roi_full)
+        cv2.fillPoly(roi, [trapezoid], (255,255,255))
+        roi = cv2.bitwise_and(roi_full, roi)
 
-        # 4) Lane mask (prefer edges; fall back to color area if edges too sparse)
-        lane_mask = edges.copy()
-        nz_edges = int(np.count_nonzero(lane_mask))
-        if nz_edges < self.min_mask_area:
-            # Use closed color mask (no edges) as fallback
-            lane_mask = color_mask.copy()
-            lane_mask = cv2.morphologyEx(lane_mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-            lane_mask = cv2.medianBlur(lane_mask, 5)
+        # 2) Build lane mask (white OR yellow) with gentle morphology
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        hls = cv2.cvtColor(roi, cv2.COLOR_BGR2HLS)
+        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
 
-        # 5) Multi-row center extraction
-        centers_px = []
-        rows_y = []
-        roi_h = max(1, y_bot - y_top)
-        lm_w = max(2, self.min_lane_w_px)
-        # weights prefer bottom (closer to car)
-        weights = []
+        white_hsv = cv2.inRange(hsv, (0, 0, self.white_v_min), (179, self.white_s_max, 255))
+        white_hls = cv2.inRange(hls[:,:,1], self.hls_L_min, 255)
+        yellow_lab = cv2.inRange(lab[:,:,2], self.lab_b_min, 255)
+
+        mask = cv2.bitwise_or(white_hsv, white_hls)
+        mask = cv2.bitwise_or(mask, yellow_lab)
+
+        k = self.morph_k
+        if k > 1:
+            kernel = np.ones((k,k), np.uint8)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            mask = cv2.medianBlur(mask, 5)
+
+        # Light edge assist to keep borders during turns
+        edges = cv2.Canny(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), self.canny_low, self.canny_high)
+        mask = cv2.bitwise_or(mask, edges)
+
+        nz = int(np.count_nonzero(mask))
+        if nz < self.min_mask_px:
+            self._fallback(mask, W, H, y0, "NO LANE (area)", dt)
+            return
+
+        # 3) Multi-row scan for lane center
+        centers, used_y = [], []
+        ys = mask.shape[0]
         for r in self.scan_rows:
-            yy = y_top + int(roi_h * float(r))
-            yy = max(y_top, min(y_bot - 1, yy))
-            scan = lane_mask[yy, :]
+            y_scan = int(ys * float(r))
+            y_scan = np.clip(y_scan, 0, ys-1)
+            scan = mask[y_scan, :]
             xs = np.where(scan > 0)[0]
-            if xs.size >= lm_w:
-                left, right = int(xs[0]), int(xs[-1])
-                if (right - left) >= lm_w:
-                    cx = 0.5 * (left + right)
-                else:
-                    cx = float(xs.mean())
-                centers_px.append(cx)
-                rows_y.append(yy)
-                # weight by closeness to bottom
-                w = 1.0 + 2.0 * ((yy - y_top) / float(roi_h + 1e-6))
-                weights.append(w)
+            if xs.size >= self.min_lane_w:
+                left_idx, right_idx = int(xs[0]), int(xs[-1])
+                if (right_idx - left_idx) >= self.min_lane_w:
+                    centers.append(0.5 * (left_idx + right_idx))
+                    used_y.append(y_scan)
 
-        # 6) Decide center & heading
-        have_rows = len(centers_px) >= self.min_valid_rows
+        if len(centers) < self.min_valid_rows:
+            self._fallback(mask, W, H, y0, "NO LANE (rows)", dt)
+            return
+
+        # Prefer lower half rows (closer to vehicle) to reduce jitter
+        take = max(2, len(centers)//2)
+        lane_center_px = float(np.mean(centers[-take:]))
+
         img_center_px = 0.5 * W
-        err_norm, heading_norm = 0.0, 0.0
-        overlay = bgr.copy() if self.debug_overlay else None
+        err_norm = (img_center_px - lane_center_px) / (W * 0.5)  # normalized lateral error, right = negative
 
-        if have_rows:
-            centers_px = np.asarray(centers_px, dtype=np.float32)
-            rows_y = np.asarray(rows_y, dtype=np.float32)
-            weights = np.asarray(weights, dtype=np.float32)
-            # weighted center (prefer lower rows)
-            center_est_px = float(np.average(centers_px, weights=weights))
-            # heading: slope of center vs row
-            try:
-                z = np.polyfit(rows_y, centers_px, 1)
-                slope = float(z[0])   # px per pixel-height
-            except Exception:
-                slope = 0.0
+        # Optional heading from linear fit of (y, cx)
+        heading = 0.0
+        if len(centers) >= 2:
+            z = np.polyfit(np.array(used_y, dtype=np.float32),
+                           np.array(centers, dtype=np.float32), 1)
+            slope = float(z[0])             # px per row
+            heading = clamp(slope / (W * 0.5), -0.6, 0.6)  # normalized tilt
 
-            # lateral error normalized to [-1..1]
-            err_px = img_center_px - center_est_px
-            err_norm = float(err_px / (0.5 * W))
-            # heading normalization (scale slope by width)
-            heading_norm = float(slope / (0.5 * W))
-
-            self.last_center = center_est_px
-            self.last_ok_time = rospy.Time.now()
-
-            # Debug draw
-            if overlay is not None:
-                cv2.polylines(overlay, [roi_poly], True, (0, 255, 0), 2)
-                for yy, cx in zip(rows_y.astype(int), centers_px.astype(int)):
-                    cv2.line(overlay, (cx, yy), (cx, max(0, yy - 30)), (0, 0, 255), 2)
-                cv2.line(overlay, (int(img_center_px), y_bot - 5),
-                         (int(img_center_px), y_bot - 60), (255, 0, 0), 2)
+        # 4) Error LPF + deadband
+        if abs(err_norm) < self.err_deadband:
+            err_n_db = 0.0
         else:
-            # 7) Green-balance fallback (if enabled)
-            used_fallback = False
-            if self.use_green_balance:
-                gmask = self._green_mask(hsv, roi_mask)
-                nz_g = int(np.count_nonzero(gmask))
-                if nz_g >= self.min_green_cols:
-                    # Find column where cumulative green ~ half
-                    col_sum = np.sum(gmask[y_top:y_bot, :], axis=0).astype(np.float32)
-                    cs = np.cumsum(col_sum)
-                    total = cs[-1] if cs.size else 0.0
-                    if total > 0.0:
-                        half = 0.5 * total
-                        k = int(np.searchsorted(cs, half))
-                        k = max(0, min(W - 1, k))
-                        center_est_px = float(k)
-                        err_px = img_center_px - center_est_px
-                        err_norm = float(err_px / (0.5 * W))
-                        heading_norm = 0.0  # unknown; be conservative
-                        self.last_center = center_est_px
-                        self.last_ok_time = rospy.Time.now()
-                        used_fallback = True
-                        if overlay is not None:
-                            cv2.polylines(overlay, [roi_poly], True, (0, 255, 255), 2)
-                            cv2.line(overlay, (k, y_bot - 5), (k, max(y_top, y_bot - 60)), (0, 255, 255), 2)
-                            cv2.putText(overlay, "GREEN BALANCE", (10, 30),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+            err_n_db = err_norm
 
-            if not used_fallback:
-                # Hold last command briefly, then stop
-                age_ms = (rospy.Time.now() - self.last_ok_time).to_sec() * 1000.0
-                if age_ms < self.hold_bad_ms:
-                    self.publish_cmd(self.last_cmd.speed, self.last_cmd.steering_angle)
-                else:
-                    self.pub_err.publish(0.0)
-                    self.publish_cmd(0.0, 0.0)
-                self._publish_debug(overlay, lane_mask, roi_poly, y_top, y_bot,
-                                    text="NO LANE", color=(0, 0, 255))
-                return
+        alpha_e = exp(-dt / max(1e-3, self.err_lpf_tau))
+        self.e_filt = alpha_e * self.e_filt + (1.0 - alpha_e) * err_n_db
+        d_err = (self.e_filt - getattr(self, "_e_filt_prev", self.e_filt)) / dt
+        self._e_filt_prev = self.e_filt
 
-        # 8) PD + heading -> steering
-        t = rospy.get_time()
-        dt = max(1e-3, t - self.prev_t)
-        d_err = (err_norm - self.prev_err) / dt
-        self.prev_err, self.prev_t = err_norm, t
-
-        steer = self.kp * err_norm + self.kd * d_err + self.k_heading * heading_norm
-        steer = clamp(steer, -self.steer_limit, self.steer_limit)
-
-        # 9) Speed scheduling: slow down for larger steer
-        speed = self.target_speed * (1.0 - self.steer_slowdown * abs(steer) / self.steer_limit)
-        speed = max(self.min_speed, speed)
-
-        # 10) Publish
-        self.pub_err.publish(float(err_norm))
-        self.publish_cmd(speed, steer)
-
-        # 11) Debug frame
-        if overlay is not None:
-            # show lane mask inside ROI as semi-transparent overlay
-            mask_rgb = cv2.cvtColor(lane_mask, cv2.COLOR_GRAY2BGR)
-            alpha = 0.45
-            overlay = cv2.addWeighted(overlay, 1.0, mask_rgb, alpha, 0.0)
-            txt = f"err={err_norm:+.2f} d={d_err:+.2f} hd={heading_norm:+.2f} st={steer:+.2f} v={speed:.2f}"
-            cv2.putText(overlay, txt, (10, y_top - 10 if y_top > 20 else 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
-        self._publish_debug(overlay, lane_mask, roi_poly, y_top, y_bot)
-
-    # ---------- helpers ----------
-    def _green_mask(self, hsv, roi_mask):
-        """Binary mask of 'green-ish grass' inside ROI."""
-        gm = cv2.inRange(hsv,
-                         (self.green_h_lo, self.green_s_min, self.green_v_min),
-                         (self.green_h_hi, 255, 255))
-        gm = cv2.bitwise_and(gm, roi_mask)
-        gm = cv2.medianBlur(gm, 5)
-        return gm
-
-    def _publish_debug(self, overlay_bgr, lane_mask, roi_poly, y_top, y_bot, text=None, color=(0, 255, 0)):
-        if overlay_bgr is None:
-            # build from scratch for safety
-            H, W = lane_mask.shape[:2]
-            overlay_bgr = np.zeros((H, W, 3), dtype=np.uint8)
-            mask_rgb = cv2.cvtColor(lane_mask, cv2.COLOR_GRAY2BGR)
-            overlay_bgr[y_top:y_bot, :] = mask_rgb[y_top:y_bot, :]
-            cv2.polylines(overlay_bgr, [roi_poly], True, color, 2)
+        # 5) PID (mostly PD) + heading
+        self.e_int += self.e_filt * dt
+        # anti-windup clamp
+        i_max = 0.5 * self.steer_limit / max(1e-6, self.ki) if self.ki > 0 else 0.0
+        if self.ki > 0:
+            self.e_int = clamp(self.e_int, -i_max, i_max)
         else:
-            cv2.polylines(overlay_bgr, [roi_poly], True, color, 2)
-        if text:
-            cv2.putText(overlay_bgr, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                        1, color, 2, cv2.LINE_AA)
+            self.e_int = 0.0
+
+        steer_cmd = self.kp * self.e_filt + self.kd * d_err + self.k_heading * heading + self.ki * self.e_int
+        if self.invert_steer:
+            steer_cmd = -steer_cmd
+
+        # 6) Steering LPF + slew-rate limit
+        alpha_s = exp(-dt / max(1e-3, self.steer_lpf_tau))
+        self.steer_filt = alpha_s * self.steer_filt + (1.0 - alpha_s) * steer_cmd
+
+        # slew rate
+        max_delta = self.steer_rate_limit * dt
+        desired = clamp(self.steer_filt, -self.steer_limit, self.steer_limit)
+        current = getattr(self, "_steer_out_prev", 0.0)
+        delta = clamp(desired - current, -max_delta, max_delta)
+        steer_out = clamp(current + delta, -self.steer_limit, self.steer_limit)
+        self._steer_out_prev = steer_out
+
+        # 7) Speed scheduling vs steering
+        steer_ratio = abs(steer_out) / max(1e-6, self.steer_limit)
+        speed = self.target_speed * (1.0 - self.slowdown_gain * (steer_ratio ** self.slowdown_pow))
+        speed = clamp(speed, self.min_speed, self.target_speed)
+
+        # 8) Safety stop
+        if self.estop:
+            speed = 0.0
+            steer_out = 0.0
+            self.e_int = 0.0
+
+        # 9) Publish
+        self.pub_err.publish(float(self.e_filt))
+        self._publish_cmd(speed, steer_out)
+        self.last_ok_time = rospy.Time.now()
+
+        # 10) Debug image
+        dbg = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        for y_scan, cx in zip(used_y, centers):
+            cv2.line(dbg, (int(cx), y_scan), (int(cx), max(0, y_scan-30)), (0,0,255), 2)
+        cv2.line(dbg, (int(img_center_px), ys-5), (int(img_center_px), ys-50), (255,0,0), 1)
+        cv2.line(dbg, (int(lane_center_px), ys-5), (int(lane_center_px), ys-50), (0,255,0), 2)
+        txt = f"e={self.e_filt:+.2f} de={d_err:+.2f} hd={heading:+.2f} st={steer_out:+.2f} v={speed:.2f} nz={nz}"
+        cv2.putText(dbg, txt, (10, dbg.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+        self._publish_debug(dbg, W, H, y0)
+
+    # -------------------- helpers --------------------
+
+    def _fallback(self, mask, W, H, y0, label, dt):
+        """When lane lost: hold last command briefly, then gentle stop."""
+        hold = (rospy.Time.now() - self.last_ok_time).to_sec() * 1000.0 < self.hold_bad_ms
+        if hold and not self.estop:
+            # keep last command but also respect slew-rate next frames
+            self._publish_cmd(self.last_cmd.speed, self.last_cmd.steering_angle)
+        else:
+            self.e_int = 0.0
+            self._publish_cmd(0.0, 0.0)
+
+        dbg = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        cv2.putText(dbg, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1,(0,0,255),2,cv2.LINE_AA)
+        self._publish_debug(dbg, W, H, y0)
+
+    def _publish_cmd(self, speed, steer):
+        cmd = AckermannDrive()
+        cmd.speed = float(speed)
+        cmd.steering_angle = float(steer)
+        self.pub_cmd.publish(cmd)
+        self.last_cmd = cmd
+
+    def _publish_debug(self, roi_bgr, W, H, y0):
+        canv = np.zeros((H, W, 3), dtype=np.uint8)
+        canv[y0:H, :] = cv2.resize(roi_bgr, (W, H - y0))
         try:
-            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(overlay_bgr, encoding="bgr8"))
+            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(canv, encoding='bgr8'))
         except Exception as e:
-            rospy.logwarn_throttle(2.0, "debug publish: %s", e)
-
+            rospy.logwarn_throttle(2.0, "vision_lka: debug publish failed: %s", e)
 
 if __name__ == "__main__":
     VisionLKA()
