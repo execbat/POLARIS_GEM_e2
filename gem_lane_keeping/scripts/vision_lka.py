@@ -13,17 +13,17 @@ class VisionLKA:
         self.bridge = CvBridge()
 
        
-        self.target_speed = rospy.get_param("~target_speed", 1.5)
+        self.target_speed = rospy.get_param("~target_speed", 1.2)
         self.kp           = rospy.get_param("~kp", 0.015)     
         self.kd           = rospy.get_param("~kd", 0.05)      
         self.k_heading    = rospy.get_param("~k_heading", 0.005)
         self.steer_limit  = rospy.get_param("~steer_limit", 0.5)  
-        self.s_thresh     = rospy.get_param("~s_thresh", 60)       
-        self.v_thresh     = rospy.get_param("~v_thresh", 50)       
-        self.roi_top      = rospy.get_param("~roi_top", 0.55)      
-        self.scan_pos     = rospy.get_param("~scan_pos", 0.75)    
-        self.min_mask_px  = rospy.get_param("~min_mask_px", 300)   
-        self.min_lane_w   = rospy.get_param("~min_lane_width_px", 40) 
+        self.s_thresh     = rospy.get_param("~s_thresh", 100)       
+        self.v_thresh     = rospy.get_param("~v_thresh", 35)       
+        self.roi_top      = rospy.get_param("~roi_top", 0.62)      
+        self.scan_pos     = rospy.get_param("~scan_pos", 0.70)    
+        self.min_mask_px  = rospy.get_param("~min_mask_px", 200)   
+        self.min_lane_w   = rospy.get_param("~min_lane_width_px", 24) 
 
         
         self.pub_cmd = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
