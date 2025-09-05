@@ -25,6 +25,10 @@ class VisionLKA:
 
         self.prev_err = 0.0
         self.prev_t = rospy.Time.now()
+        
+        rospy.loginfo("vision_lka params: ts=%.2f kp=%.3f kd=%.3f kh=%.3f steer_lim=%.2f s=%d v=%d",
+              self.target_speed, self.kp, self.kd, self.k_heading, self.steer_limit,
+              self.s_thresh, self.v_thresh)
 
     def on_image(self, msg):
         try:
@@ -38,6 +42,7 @@ class VisionLKA:
 
         
         road = cv2.inRange(hsv, (0,0,self.v_thresh), (179,self.s_thresh,255))
+        
         road = cv2.medianBlur(road, 5)
         road = cv2.morphologyEx(road, cv2.MORPH_CLOSE, np.ones((7,7), np.uint8))
 
