@@ -47,7 +47,7 @@ class VisionLKA:
         self.k_heading    = rospy.get_param("~k_heading", 0.010)  # heading sign handled below
         self.steer_limit  = rospy.get_param("~steer_limit", 0.50)
         # Shift desired geometric center horizontally (+right, -left), px in image coords
-        self.center_bias_px = rospy.get_param("~center_bias_px", 0.0)
+        self.center_bias_px = rospy.get_param("~center_bias_px", 45.0)
 
         # ---------- Mask thresholds ----------
         # HSV white: S <= s_thresh, V >= v_thresh
@@ -81,7 +81,7 @@ class VisionLKA:
         self.offset_from_yellow_px = rospy.get_param("~offset_from_yellow_px", 160.0)
         self.edges_weight = rospy.get_param("~edges_weight", 0.55)   # both borders (primary)
         self.mid_weight   = rospy.get_param("~mid_weight",   0.60)   # dashed white near image center
-        self.yellow_weight= rospy.get_param("~yellow_weight",0.15)   # yellow fallback (secondary)
+        self.yellow_weight= rospy.get_param("~yellow_weight",0.05)   # yellow fallback (secondary)
 
         # ---------- State ----------
         self.estop        = False
