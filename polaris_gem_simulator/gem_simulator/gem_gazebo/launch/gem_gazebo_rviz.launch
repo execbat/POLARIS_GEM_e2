@@ -146,11 +146,13 @@
     <node pkg="gem_core" type="pure_pursuit.py" name="pure_pursuit" output="screen">
       <!-- controller params -->
       <rosparam param="lookahead">3.0</rosparam>
+      <param name="cruise_speed" value="1.5"/>
 
       <!--  remaps to GLOBAL topics -->
       <remap from="cmd"    to="/pure_pursuit/cmd"/>
       <remap from="path"   to="/pure_pursuit/path"/>
       <remap from="enable" to="/pure_pursuit/enable"/>
+      <remap from="status" to="/pure_pursuit/status"/> 
     </node>
 
     <!-- Mux: chosing of active path-tracking controller -->
