@@ -46,7 +46,7 @@ class VisionLKA:
         self.k_heading      = rospy.get_param("~k_heading",    0.45)
         self.steer_limit    = rospy.get_param("~steer_limit",  0.60)
         self.steer_slowdown = rospy.get_param("~steer_slowdown", 0.65)
-        self.invert_steer   = rospy.get_param("~invert_steer", False)
+        self.invert_steer   = rospy.get_param("~invert_steer", True)
 
         # ======= ROI (TRAPEZOID) =======
         # Top/bottom in fraction of image height (0..1), top width fraction (0..1)
