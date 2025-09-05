@@ -111,11 +111,11 @@
       <remap from="debug"         to="/vision_lka/debug"/>
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>  
       
-      <param name="target_speed" value="1.2"/>
+      <param name="target_speed" value="1.5"/>
       <param name="kp" value="0.015"/>
       <param name="kd" value="0.05"/>
       <param name="k_heading" value="0.005"/>
-      <param name="steer_limit" value="0.35"/>
+      <param name="steer_limit" value="1.00"/>
       <param name="s_thresh" value="100"/>
       <param name="v_thresh" value="35"/>
     </node>

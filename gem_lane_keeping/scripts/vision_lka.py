@@ -13,11 +13,11 @@ class VisionLKA:
         self.bridge = CvBridge()
 
        
-        self.target_speed = rospy.get_param("~target_speed", 1.2)
+        self.target_speed = rospy.get_param("~target_speed", 1.5)
         self.kp           = rospy.get_param("~kp", 0.015)     
         self.kd           = rospy.get_param("~kd", 0.05)      
         self.k_heading    = rospy.get_param("~k_heading", 0.005)
-        self.steer_limit  = rospy.get_param("~steer_limit", 0.5)  
+        self.steer_limit  = rospy.get_param("~steer_limit", 1.0)  
         self.s_thresh     = rospy.get_param("~s_thresh", 100)       
         self.v_thresh     = rospy.get_param("~v_thresh", 35)       
         self.roi_top      = rospy.get_param("~roi_top", 0.62)      
