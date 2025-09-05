@@ -26,6 +26,9 @@ class VisionLKA:
         self.prev_err = 0.0
         self.prev_t = rospy.Time.now()
         
+        self.estop = False
+        rospy.Subscriber("/gem/safety/stop", Bool, self.on_stop, queue_size=1)
+        
         rospy.loginfo("vision_lka params: ts=%.2f kp=%.3f kd=%.3f kh=%.3f steer_lim=%.2f s=%d v=%d",
               self.target_speed, self.kp, self.kd, self.k_heading, self.steer_limit,
               self.s_thresh, self.v_thresh)
@@ -85,10 +88,16 @@ class VisionLKA:
         self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(cv2.resize(dbg,(w,h//2)), encoding="bgr8"))
 
     def publish_cmd(self, speed, steer):
+        if self.estop:
+            speed = 0.0
+            steer = 0.0
         cmd = AckermannDrive()
         cmd.speed = float(speed)
         cmd.steering_angle = float(steer)
         self.pub_cmd.publish(cmd)
+        
+    def on_stop(self, msg: Bool):
+        self.estop = bool(msg.data)        
 
 if __name__ == "__main__":
     rospy.init_node("vision_lka")

@@ -155,8 +155,8 @@
       <param name="temp_thresh_c" value="55.0"/>
       <param name="gps_hacc_thresh_mm" value="200.0"/>
       <param name="gps_timeout_bad_s" value="15.0"/>
-      <param name="net_timeout_disconnected_s" value="10.0"/>
-      <param name="net_timeout_low_s" value="20.0"/>
+      <param name="net_timeout_disconnected_s" value="20.0"/>
+      <param name="net_timeout_low_s" value="10.0"/>
       <param name="cmd_activity_topic" value="$(arg output_cmd_topic)"/>
     </node>
     

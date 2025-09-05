@@ -18,8 +18,8 @@ class Supervisor:
         self.battery_thresh = rospy.get_param("~battery_thresh_pct", 50.0)   # <=50% -> ERROR
         self.temp_thresh    = rospy.get_param("~temp_thresh_c", 55.0)        # >=55C -> ERROR
         self.gps_thresh_mm  = rospy.get_param("~gps_hacc_thresh_mm", 200.0)  # <200mm -> ERROR 
-        self.net_timeout0_s = rospy.get_param("~net_timeout_disconnected_s", 10.0)
-        self.net_timeout2_s = rospy.get_param("~net_timeout_low_s", 20.0)
+        self.net_timeout0_s = rospy.get_param("~net_timeout_disconnected_s", 20.0)
+        self.net_timeout2_s = rospy.get_param("~net_timeout_low_s", 10.0)
         self.gps_timeout_s  = rospy.get_param("~gps_timeout_bad_s", 15.0)
         # Timers of "Bad" conditions. Used for timeouts
         self.bad_since = {
@@ -57,7 +57,7 @@ class Supervisor:
         now = rospy.Time.now()
 
         # GPS condition — "if < 200 mm => ERROR after 15sec"
-        if msg.gps_hacc_mm < self.gps_thresh_mm:
+        if msg.gps_hacc_mm >= self.gps_thresh_mm:
             if self.bad_since["gps"] is None:
                 self.bad_since["gps"] = now
         else:
@@ -100,7 +100,7 @@ class Supervisor:
 
         # Delayed changes
         if self.is_timeout("gps", self.gps_timeout_s):
-            mask |= ERR_GPS; reasons.append("gps_hacc<%.0fmm for %.0fs" % (self.gps_thresh_mm, self.gps_timeout_s))
+            mask |= ERR_GPS; reasons.append("gps_hacc>=%.0fmm for %.0fs" % (self.gps_thresh_mm, self.gps_timeout_s))
         if self.is_timeout("net0", self.net_timeout0_s):
             mask |= ERR_INTERNET; reasons.append("internet=0 for %.0fs" % self.net_timeout0_s)
         if self.is_timeout("net2", self.net_timeout2_s):
