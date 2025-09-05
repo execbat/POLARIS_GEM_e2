@@ -103,7 +103,7 @@
 
 
     <!-- Vision LKA -->
-    <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen">
+    <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
       <remap from="image" to="/gem/front_single_camera/image_raw"/> 
       
       <!-- remaps-->
