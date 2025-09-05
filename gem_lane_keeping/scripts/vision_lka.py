@@ -1,44 +1,65 @@
 #!/usr/bin/env python3
-import rospy, cv2, numpy as np, math
+import rospy, cv2, numpy as np
 from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDrive
 from std_msgs.msg import Float32, Bool
 from cv_bridge import CvBridge
 
-def clamp(v, lo, hi): return max(lo, min(hi, v))
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 class VisionLKA:
     def __init__(self):
         rospy.init_node("vision_lka")
         self.bridge = CvBridge()
 
-       
+        # --- control params ---
         self.target_speed = rospy.get_param("~target_speed", 1.5)
-        self.kp           = rospy.get_param("~kp", 0.015)     
-        self.kd           = rospy.get_param("~kd", 0.05)      
-        self.k_heading    = rospy.get_param("~k_heading", 0.005)
-        self.steer_limit  = rospy.get_param("~steer_limit", 1.0)  
-        self.s_thresh     = rospy.get_param("~s_thresh", 100)       
-        self.v_thresh     = rospy.get_param("~v_thresh", 35)       
-        self.roi_top      = rospy.get_param("~roi_top", 0.62)      
-        self.scan_pos     = rospy.get_param("~scan_pos", 0.70)    
-        self.min_mask_px  = rospy.get_param("~min_mask_px", 200)   
-        self.min_lane_w   = rospy.get_param("~min_lane_width_px", 24) 
+        self.kp           = rospy.get_param("~kp", 0.020)
+        self.kd           = rospy.get_param("~kd", 0.060)
+        self.k_heading    = rospy.get_param("~k_heading", 0.012)
+        self.steer_limit  = rospy.get_param("~steer_limit", 0.40)
 
-        
+        # --- color/mask ---
+        # HSV-white 
+        self.s_thresh     = rospy.get_param("~s_thresh", 100)
+        self.v_thresh     = rospy.get_param("~v_thresh", 35)
+        # HLS-white 
+        self.hls_L_min    = rospy.get_param("~hls_L_min", 190)
+        # LAB-yellow 
+        self.lab_b_min    = rospy.get_param("~lab_b_min", 140)
+
+        # --- scan geometry ---
+        self.roi_top      = rospy.get_param("~roi_top", 0.62)               # верх ROI (доля высоты кадра)
+        self.scan_rows    = rospy.get_param("~scan_rows", [0.60, 0.70, 0.80, 0.90])  # scan scales by height
+        self.min_mask_px  = rospy.get_param("~min_mask_px", 150)            # min masked square
+        self.min_lane_w   = rospy.get_param("~min_lane_width_px", 22)       # min wide in pixels
+        self.min_valid_rows = rospy.get_param("~min_valid_rows", 2)         # min number of valid lines
+        self.hold_bad_ms  = rospy.get_param("~hold_bad_ms", 400)            # hold last cmd
+
+        # --- состояние ---
+        self.estop        = False
+        self.prev_err     = 0.0
+        self.prev_t       = rospy.get_time()
+        self.last_ok_time = rospy.Time(0.0)
+        self.last_cmd     = AckermannDrive()
+
+        # --- I/O ---
         self.pub_cmd = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
         self.pub_err = rospy.Publisher("lateral_error", Float32, queue_size=10)
         self.pub_dbg = rospy.Publisher("debug", Image, queue_size=1)
         rospy.Subscriber("image", Image, self.on_image, queue_size=1)
         rospy.Subscriber("/gem/safety/stop", Bool, self.on_stop, queue_size=1)
 
-        self.estop = False
-        self.prev_err = 0.0
-        self.prev_t = rospy.get_time()
-
-        rospy.loginfo("vision_lka params: ts=%.2f kp=%.3f kd=%.3f kh=%.3f steer_lim=%.2f s=%d v=%d roi=%.2f scan=%.2f",
+        rospy.loginfo("vision_lka params: ts=%.2f kp=%.3f kd=%.3f kh=%.3f steer=%.2f "
+                      "HSV(S<=%d,V>=%d) HLS(L>=%d) LAB(b>=%d) roi=%.2f scans=%s "
+                      "min_mask=%d min_w=%d min_rows=%d hold=%dms",
                       self.target_speed, self.kp, self.kd, self.k_heading, self.steer_limit,
-                      self.s_thresh, self.v_thresh, self.roi_top, self.scan_pos)
+                      self.s_thresh, self.v_thresh, self.hls_L_min, self.lab_b_min,
+                      self.roi_top, str(self.scan_rows),
+                      self.min_mask_px, self.min_lane_w, self.min_valid_rows, self.hold_bad_ms)
+
+    # -------------------- callbacks --------------------
 
     def on_stop(self, msg: Bool):
         self.estop = bool(msg.data)
@@ -53,99 +74,115 @@ class VisionLKA:
         self.pub_cmd.publish(cmd)
 
     def on_image(self, msg: Image):
-        # 1) BGR и ROI
+        # 1) BGR & ROI
         try:
             bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as e:
-            rospy.logwarn_throttle(2.0, "cv_bridge err: %s", e); return
+            rospy.logwarn_throttle(2.0, "cv_bridge err: %s", e)
+            return
 
         h, w = bgr.shape[:2]
         y0 = int(h * self.roi_top)
+        if y0 >= h-2:
+            y0 = max(0, h-2)
         roi = bgr[y0:h, :]
 
-        
+        # 2) mask: HSV-white OR HLS-white, AND LAB-yellow
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        white  = cv2.inRange(hsv, (0,   0,   self.v_thresh), (179, self.s_thresh, 255))
-        yellow = cv2.inRange(hsv, (15, 80,   80),            (35,  255,          255))
-        mask = cv2.bitwise_or(white, yellow)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5,5), np.uint8))
+        hls = cv2.cvtColor(roi, cv2.COLOR_BGR2HLS)
+        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+
+        white_hsv = cv2.inRange(hsv, (0, 0, self.v_thresh), (179, self.s_thresh, 255))
+        white_hls = cv2.inRange(hls[:, :, 1], self.hls_L_min, 255)
+        yellow_lab = cv2.inRange(lab[:, :, 2], self.lab_b_min, 255)
+
+        mask = cv2.bitwise_or(white_hsv, white_hls)
+        mask = cv2.bitwise_or(mask, yellow_lab)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         mask = cv2.medianBlur(mask, 5)
 
         nz_count = int(np.count_nonzero(mask))
-
-        
         if nz_count < self.min_mask_px:
-            self._publish_debug(mask, w, h, y0, label="NO LANE")
-            self.pub_err.publish(0.0)
-            self.publish_cmd(0.0, 0.0)
+            self._debug_and_stop(mask, w, h, y0, "NO LANE (area)")
             return
 
-        
+        # 3) miltiscan
         ys = mask.shape[0]
-        y_scan = int(ys * self.scan_pos)
-        scan = mask[y_scan, :]
-        xs = np.where(scan > 0)[0]
-        if xs.size < 2:
-            self._publish_debug(mask, w, h, y0, label="SCAN EMPTY")
-            self.pub_err.publish(0.0)
-            self.publish_cmd(0.0, 0.0)
+        centers = []
+        used_y = []
+        for r in self.scan_rows:
+            y_scan = int(ys * float(r))
+            y_scan = np.clip(y_scan, 0, ys - 1)
+            scan = mask[y_scan, :]
+            xs = np.where(scan > 0)[0]
+            if xs.size >= self.min_lane_w:
+                left_idx, right_idx = int(xs[0]), int(xs[-1])
+                if (right_idx - left_idx) >= self.min_lane_w:
+                    centers.append(0.5 * (left_idx + right_idx))
+                    used_y.append(y_scan)
+
+        if len(centers) < self.min_valid_rows:
+            # hold last cmd, and stop after
+            if (rospy.Time.now() - self.last_ok_time).to_sec() * 1000.0 < self.hold_bad_ms:
+                self.publish_cmd(self.last_cmd.speed, self.last_cmd.steering_angle)
+            else:
+                self.pub_err.publish(0.0)
+                self.publish_cmd(0.0, 0.0)
+            self._debug_and_stop(mask, w, h, y0, "NO LANE (rows)")
             return
 
-        left_idx, right_idx = int(xs[0]), int(xs[-1])
-        if (right_idx - left_idx) < self.min_lane_w:
-            self._publish_debug(mask, w, h, y0, label="LANE TOO NARROW")
-            self.pub_err.publish(0.0)
-            self.publish_cmd(0.0, 0.0)
-            return
+        # 4) center of direction
+        lane_center_px = float(np.mean(centers[-max(1, len(centers)//2):]))  # среднее по нижним строкам
+        img_center_px = 0.5 * w
+        err = (img_center_px - lane_center_px) / (w * 0.5)  # нормированный латеральный
 
-        lane_center_px = 0.5 * (left_idx + right_idx)
-        img_center_px  = 0.5 * w
-        err_px = (img_center_px - lane_center_px)    # >0: линия правее центра → рулить вправо
+        # heading: center tilt
+        heading = 0.0
+        if len(centers) >= 2:
+            z = np.polyfit(np.array(used_y, dtype=np.float32), np.array(centers, dtype=np.float32), 1)
+            slope = z[0]  
+            # wide normalization
+            heading = float(slope) / (w * 0.5)
 
-        
-        err = float(err_px) / (w/2.0)           
-        t  = rospy.get_time()
+        # 5) PD + heading
+        t = rospy.get_time()
         dt = max(1e-3, t - self.prev_t)
         d_err = (err - self.prev_err) / dt
         self.prev_err, self.prev_t = err, t
 
-        
-        m = cv2.moments(mask, binaryImage=True)
-        heading = 0.0
-        if m['m00'] > 1e3:
-            cx = m['m10']/m['m00']  
-            heading = - ( (cx - img_center_px) / (w/2.0) ) 
-
-        
-        steer = self.kp*err + self.kd*d_err + self.k_heading*heading
+        steer = self.kp * err + self.kd * d_err + self.k_heading * heading
         speed = self.target_speed
 
-        
-        dbg = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-        cv2.line(dbg, (int(lane_center_px), y_scan), (int(lane_center_px), max(0, y_scan-40)), (0,0,255), 2)
-        cv2.line(dbg, (int(img_center_px),  y_scan), (int(img_center_px),  max(0, y_scan-40)), (255,0,0), 1)
-        txt = f"nz={nz_count} err={err:+.2f} de={d_err:+.2f} hd={heading:+.2f} st={steer:+.2f} v={speed:.2f}"
-        cv2.putText(dbg, txt, (10, dbg.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
-        self._publish_debug(dbg, w, h, y0)
-
-        
+        # 6) publishing and last cmd
         self.pub_err.publish(float(err))
         self.publish_cmd(speed, steer)
+        self.last_ok_time = rospy.Time.now()
+        self.last_cmd = AckermannDrive(speed=float(speed), steering_angle=float(clamp(steer, -self.steer_limit, self.steer_limit)))
 
-    def _publish_debug(self, roi_bgr_or_mask, w, h, y0, label=None):
-        """Вклеиваем ROI обратно в холст исходного размера и шлём /vision_lka/debug"""
-        if len(roi_bgr_or_mask.shape) == 2:
-            roi_bgr = cv2.cvtColor(roi_bgr_or_mask, cv2.COLOR_GRAY2BGR)
-        else:
-            roi_bgr = roi_bgr_or_mask
+        # 7) debug
+        dbg = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        for y_scan, cx in zip(used_y, centers):
+            cv2.line(dbg, (int(cx), y_scan), (int(cx), max(0, y_scan - 30)), (0, 0, 255), 2)
+        cv2.line(dbg, (int(img_center_px), ys - 5), (int(img_center_px), ys - 50), (255, 0, 0), 1)
+        txt = f"nz={nz_count} err={err:+.2f} de={d_err:+.2f} hd={heading:+.3f} st={steer:+.2f} v={speed:.2f}"
+        cv2.putText(dbg, txt, (10, dbg.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        self._publish_debug(dbg, w, h, y0)
+
+    # -------------------- helpers --------------------
+
+    def _debug_and_stop(self, mask, w, h, y0, label):
+        dbg = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        cv2.putText(dbg, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        self._publish_debug(dbg, w, h, y0)
+        
+
+    def _publish_debug(self, roi_bgr, w, h, y0):
         canv = np.zeros((h, w, 3), dtype=np.uint8)
         canv[y0:h, :] = cv2.resize(roi_bgr, (w, h - y0))
-        if label:
-            cv2.putText(canv, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1,(0,0,255),2,cv2.LINE_AA)
         try:
             self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(canv, encoding='bgr8'))
         except Exception as e:
-            rospy.logwarn_throttle(2.0, "debug publish failed: %s", e)
+            rospy.logwarn_throttle(2.0, "vision_lka: debug publish failed: %s", e)
 
 if __name__ == "__main__":
     VisionLKA()
