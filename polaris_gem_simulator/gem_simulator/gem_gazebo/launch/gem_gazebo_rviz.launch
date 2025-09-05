@@ -107,6 +107,7 @@
     
     
     <!-- NAV: Task Planner -->
+    <!-- Default 
     <node pkg="gem_nav" type="task_planner.py" name="task_planner" output="screen">
       <param name="frame_id"           value="$(arg frame_id)"/>
       <param name="waypoints_file"     value="$(arg waypoints_file)"/>
@@ -116,7 +117,16 @@
       <param name="stop_at_goal"       value="$(arg stop_at_goal)"/>
       <param name="pose_topic"         value="$(arg pose_topic)"/>
     </node>
-    
+    -->
+    <node pkg="gem_nav" type="task_planner.py" name="task_planner" output="screen">
+      <param name="frame_id"           value="odom"/>        
+      <param name="pose_topic"         value="odom"/>         
+      <param name="waypoints_file"     value="$(find gem_gazebo)/config/track_waypoints.csv"/>
+      <param name="start_radius"       value="2.0"/>          
+      <param name="goal_radius"        value="2.0"/>
+      <param name="start_speed_thresh" value="0.2"/>
+      <param name="stop_at_goal"       value="true"/>
+    </node>
     
     
     
