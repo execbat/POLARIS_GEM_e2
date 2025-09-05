@@ -96,7 +96,7 @@ class VisionLKA:
         cmd.steering_angle = float(steer)
         self.pub_cmd.publish(cmd)
         
-    def on_stop(self, msg: Bool):
+    def on_stop(self, msg):
         self.estop = bool(msg.data)        
 
 if __name__ == "__main__":
