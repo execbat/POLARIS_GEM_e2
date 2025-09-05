@@ -10,9 +10,6 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_ros
 )
 
-catkin_package(
-  CATKIN_DEPENDS rospy std_msgs nav_msgs geometry_msgs ackermann_msgs tf2_ros
-)
 
 catkin_install_python(PROGRAMS
   scripts/task_planner.py
