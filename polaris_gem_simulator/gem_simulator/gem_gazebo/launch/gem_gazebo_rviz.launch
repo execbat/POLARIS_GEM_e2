@@ -1,8 +1,10 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="robot_name" default="gem"/>
 
   <!-- Settings added by Evgenii-->
   <env name="GAZEBO_PLUGIN_PATH" value="/opt/ros/noetic/lib:$(optenv GAZEBO_PLUGIN_PATH)"/>
+  
   
   <!-- NAV: planner args -->
   <arg name="frame_id"            default="map"/>
@@ -49,7 +51,7 @@
   <arg name="init_pose" value="-x $(arg x) -y $(arg y) -z $(arg z) -R $(arg roll) -P $(arg pitch) -Y $(arg yaw)"/>
   
   <!-- Sensor settings -->
-  <arg name="robot_name" default="gem"/>
+  
   <arg name="velodyne_points" default="false"/>
   <arg name="laser_points" default="false"/>
   
