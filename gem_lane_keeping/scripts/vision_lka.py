@@ -9,10 +9,13 @@ class VisionLKA:
     def __init__(self):
         self.bridge = CvBridge()
         # relative name  "image"
-        self.img_sub = rospy.Subscriber("image", Image, self.on_image, queue_size=1, buff_size=2**24)
-        self.pub_cmd = rospy.Publisher("/vision_lka/cmd", AckermannDrive, queue_size=10)
-        self.pub_err = rospy.Publisher("/vision_lka/lateral_error", Float32, queue_size=10)
-        self.pub_dbg = rospy.Publisher("/vision_lka/debug", Image, queue_size=1)
+        self.pub_cmd = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
+        self.pub_err = rospy.Publisher("lateral_error", Float32, queue_size=10)
+        self.pub_dbg = rospy.Publisher("debug", Image, queue_size=1)
+        rospy.Subscriber("image", Image, self.on_image, queue_size=1)
+        
+        rospy.Subscriber("/gem/safety/stop", Bool, self.on_stop, queue_size=1)
+        self.estop = False
 
         # params
         self.target_speed = rospy.get_param("~target_speed", 1.5)
@@ -25,9 +28,7 @@ class VisionLKA:
 
         self.prev_err = 0.0
         self.prev_t = rospy.Time.now()
-        
-        self.estop = False
-        rospy.Subscriber("/gem/safety/stop", Bool, self.on_stop, queue_size=1)
+
         
         rospy.loginfo("vision_lka params: ts=%.2f kp=%.3f kd=%.3f kh=%.3f steer_lim=%.2f s=%d v=%d",
               self.target_speed, self.kp, self.kd, self.k_heading, self.steer_limit,
@@ -86,6 +87,11 @@ class VisionLKA:
         cv2.line(dbg, (int(lane_center_px), y_scan), (int(lane_center_px), max(0, y_scan-40)), (0,0,255), 2)
         cv2.line(dbg, (int(img_center_px),   y_scan), (int(img_center_px),   max(0, y_scan-40)), (255,0,0), 2)
         self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(cv2.resize(dbg,(w,h//2)), encoding="bgr8"))
+        
+        try:
+            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(debug_img, encoding='mono8'))
+        except Exception as e:
+            rospy.logwarn_throttle(2.0, "vision_lka: debug publish failed: %s", e)
 
     def publish_cmd(self, speed, steer):
         if self.estop:

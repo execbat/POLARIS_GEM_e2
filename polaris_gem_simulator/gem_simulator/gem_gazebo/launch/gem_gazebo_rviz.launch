@@ -104,7 +104,13 @@
 
     <!-- Vision LKA -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen">
-      <remap from="image" to="/gem/front_single_camera/image_raw"/>   
+      <remap from="image" to="/gem/front_single_camera/image_raw"/> 
+      
+      <!-- remaps-->
+      <remap from="cmd"           to="/vision_lka/cmd"/>
+      <remap from="debug"         to="/vision_lka/debug"/>
+      <remap from="lateral_error" to="/vision_lka/lateral_error"/>  
+      
       <param name="target_speed" value="1.5"/>
       <param name="kp" value="0.015"/>
       <param name="kd" value="0.05"/>
