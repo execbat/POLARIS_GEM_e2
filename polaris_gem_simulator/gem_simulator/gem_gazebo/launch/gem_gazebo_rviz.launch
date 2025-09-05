@@ -118,6 +118,31 @@
       <param name="steer_limit" value="1.00"/>
       <param name="s_thresh" value="100"/>
       <param name="v_thresh" value="35"/>
+      <rosparam>
+        target_speed: 1.5
+        min_speed: 0.6
+        steer_limit: 0.55
+        kp: 0.9
+        kd: 0.15
+        k_heading: 0.35
+        roi_y_top: 0.60
+        roi_y_bot: 1.0
+        roi_top_width_frac: 0.30
+        blur_ksize: 5
+        canny_low: 60
+        canny_high: 150
+        hough_rho: 1.0
+        hough_theta_deg: 1
+        hough_thresh: 30
+        hough_min_len: 25
+        hough_max_gap: 20
+        slope_min: 0.35
+        lane_width_frac: 0.45
+        y_eval_frac: 0.92
+        min_segments: 2
+        hold_bad_ms: 500
+        min_valid_sides: 1
+      </rosparam>
     </node>
    
     

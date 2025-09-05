@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Grass-balance Lane Keeping (fixed gating)
+Lane keeping using Canny + HoughLinesP.
 
-Key changes vs previous:
-  - Only LOWER confidence bound is enforced (min_grass_ratio). Upper bound no longer stops the car.
-  - Wider default HSV/LAB for grass.
-  - Extra telemetry with rospy.loginfo_throttle for ratio/areas/error.
+Inputs:
+  - sensor_msgs/Image on topic "image" (remap to /gem/front_single_camera/image_raw)
+Outputs:
+  - ackermann_msgs/AckermannDrive on topic "cmd"
+  - sensor_msgs/Image on topic "debug" (visualization)
+  - std_msgs/Float32 on "lateral_error" (normalized lateral error)
+
+Tuning knobs are exposed as ROS params (see below).
 """
 
 import rospy
@@ -19,188 +23,271 @@ from cv_bridge import CvBridge
 
 
 def clamp(v, lo, hi):
-    return max(lo, min(hi, v))
+    return lo if v < lo else (hi if v > hi else v)
 
 
-class VisionLKA:
+class VisionLKA_Hough:
     def __init__(self):
         rospy.init_node("vision_lka")
+
+        # ---------------- I/O ----------------
         self.bridge = CvBridge()
-
-        # ---------------- Control ----------------
-        self.target_speed = rospy.get_param("~target_speed", 1.6)
-        self.min_speed    = rospy.get_param("~min_speed",   0.6)
-        self.steer_limit  = rospy.get_param("~steer_limit", 0.55)
-
-        # PD(+I) on area-difference error (right - left)
-        self.kp = rospy.get_param("~kp",  1.10)
-        self.kd = rospy.get_param("~kd",  0.20)
-        self.ki = rospy.get_param("~ki",  0.00)
-        self.deadband = rospy.get_param("~deadband", 0.02)
-
-        # Speed scaling with steering + confidence
-        self.steer_slowdown = rospy.get_param("~steer_slowdown", 0.85)
-        self.conf_floor     = rospy.get_param("~conf_floor",     0.55)
-
-        # ---------------- ROI & weights ----------------
-        self.roi_top   = rospy.get_param("~roi_top", 0.54)
-        self.roi_bot   = rospy.get_param("~roi_bot", 1.00)
-        self.gamma_y   = rospy.get_param("~gamma_y", 1.6)
-        self.center_ignore_frac = rospy.get_param("~center_ignore_frac", 0.00)
-
-        # ---------------- Grass segmentation ----------------
-        # Wider defaults
-        self.h_lo = rospy.get_param("~h_lo", 28)
-        self.h_hi = rospy.get_param("~h_hi", 100)
-        self.s_lo = rospy.get_param("~s_lo", 32)
-        self.v_lo = rospy.get_param("~v_lo", 28)
-        self.lab_a_max = rospy.get_param("~lab_a_max", 155)
-
-        self.close_kernel = rospy.get_param("~close_kernel", 9)
-        self.open_kernel  = rospy.get_param("~open_kernel",  3)
-        self.blur_ksize   = rospy.get_param("~blur_ksize",   5)
-
-        # ---------------- Confidence ----------------
-        # Only the LOWER bound is enforced now
-        self.min_grass_ratio = rospy.get_param("~min_grass_ratio", 0.004)  # 0.4%
-        self.hold_bad_ms     = rospy.get_param("~hold_bad_ms", 600)
-
-        # EMA smoothing
-        self.diff_alpha   = rospy.get_param("~diff_alpha", 0.35)
-        self.diff_ema     = 0.0
-
-        # ---------------- State ----------------
-        self.estop     = False
-        self.prev_err  = 0.0
-        self.i_err     = 0.0
-        self.prev_t    = rospy.get_time()
-        self.last_ok_t = rospy.Time(0.0)
-        self.last_cmd  = AckermannDrive()
-
-        # ---------------- IO ----------------
         self.pub_cmd = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
         self.pub_err = rospy.Publisher("lateral_error", Float32, queue_size=10)
         self.pub_dbg = rospy.Publisher("debug", Image, queue_size=1)
         rospy.Subscriber("image", Image, self.on_image, queue_size=1)
         rospy.Subscriber("/gem/safety/stop", Bool, self.on_stop, queue_size=1)
 
+        # ---------------- Control params ----------------
+        self.target_speed   = rospy.get_param("~target_speed", 1.5)
+        self.min_speed      = rospy.get_param("~min_speed",   0.6)
+        self.steer_limit    = rospy.get_param("~steer_limit", 0.55)
+        self.kp             = rospy.get_param("~kp", 0.90)       # lateral P (center error)
+        self.kd             = rospy.get_param("~kd", 0.15)       # lateral D
+        self.k_heading      = rospy.get_param("~k_heading", 0.35)# heading gain (from line slope/angle)
+        self.deadband       = rospy.get_param("~deadband", 0.00)
+        self.steer_slowdown = rospy.get_param("~steer_slowdown", 0.75)  # how much to slow vs |steer|
+        self.invert_steer   = rospy.get_param("~invert_steer", False)
+
+        # ---------------- ROI (trapezoid) ----------------
+        # Fraction of image height where ROI starts and ends (0..1)
+        self.roi_y_top  = rospy.get_param("~roi_y_top", 0.60)    # start of ROI (from top)
+        self.roi_y_bot  = rospy.get_param("~roi_y_bot", 1.00)    # end of ROI (usually 1.0 = bottom)
+        # Trapezoid top width as fraction of image width (0..1), bottom width = 1.0
+        self.roi_top_width_frac = rospy.get_param("~roi_top_width_frac", 0.30)
+
+        # ---------------- Canny/Hough ----------------
+        self.blur_ksize = rospy.get_param("~blur_ksize", 5)  # must be odd
+        self.canny_low  = rospy.get_param("~canny_low", 60)
+        self.canny_high = rospy.get_param("~canny_high", 150)
+
+        self.hough_rho         = rospy.get_param("~hough_rho", 1.0)
+        self.hough_theta_deg   = rospy.get_param("~hough_theta_deg", 1.0)
+        self.hough_thresh      = rospy.get_param("~hough_thresh", 30)
+        self.hough_min_len     = rospy.get_param("~hough_min_len", 25)
+        self.hough_max_gap     = rospy.get_param("~hough_max_gap", 20)
+
+        # Accept only sufficiently slanted lines (|slope| >= slope_min)
+        self.slope_min         = rospy.get_param("~slope_min", 0.35)
+
+        # If only one side is visible, assume lane width in pixels (scaled by image width)
+        self.lane_width_frac   = rospy.get_param("~lane_width_frac", 0.45)  # proportion of image width
+        self.y_eval_frac       = rospy.get_param("~y_eval_frac", 0.92)      # y (in ROI) where we compute x_left/x_right
+
+        # Confidence / gating
+        self.min_segments      = rospy.get_param("~min_segments", 2)  # min total Hough segments to consider valid
+        self.hold_bad_ms       = rospy.get_param("~hold_bad_ms", 500) # hold last command before stopping
+        self.min_valid_sides   = rospy.get_param("~min_valid_sides", 1)  # allow 1 side only
+
+        # ---------------- State ----------------
+        self.estop      = False
+        self.prev_err   = 0.0
+        self.prev_t     = rospy.get_time()
+        self.last_ok_t  = rospy.Time(0.0)
+        self.last_cmd   = AckermannDrive()
+        self.last_cmd.speed = self.min_speed
+        self.last_cmd.steering_angle = 0.0
+
         rospy.loginfo(
-            "Grass-LKA fixed: v=%.2f..%.2f steer_lim=%.2f kp=%.2f kd=%.2f ki=%.3f "
-            "roi=[%.2f..%.2f] gamma=%.2f HSV(H:%d..%d,S>=%d,V>=%d) LAB(a<=%d) "
-            "kernels(close=%d,open=%d,blur=%d) min_grass_ratio=%.4f hold=%dms",
-            self.min_speed, self.target_speed, self.steer_limit, self.kp, self.kd, self.ki,
-            self.roi_top, self.roi_bot, self.gamma_y,
-            self.h_lo, self.h_hi, self.s_lo, self.v_lo, self.lab_a_max,
-            self.close_kernel, self.open_kernel, self.blur_ksize,
-            self.min_grass_ratio, self.hold_bad_ms
+            "VisionLKA Hough: v=%.2f..%.2f steer_lim=%.2f kp=%.2f kd=%.2f kh=%.2f "
+            "roi_y=[%.2f..%.2f], top_w=%.2f canny(%d,%d) blur=%d "
+            "hough(rho=%.1f, theta=%ddeg, thr=%d, minLen=%d, maxGap=%d) slope_min=%.2f "
+            "lane_w=%.2f y_eval=%.2f min_seg=%d hold=%dms",
+            self.min_speed, self.target_speed, self.steer_limit, self.kp, self.kd, self.k_heading,
+            self.roi_y_top, self.roi_y_bot, self.roi_top_width_frac,
+            self.canny_low, self.canny_high, self.blur_ksize,
+            self.hough_rho, int(self.hough_theta_deg), self.hough_thresh, self.hough_min_len, self.hough_max_gap,
+            self.slope_min, self.lane_width_frac, self.y_eval_frac, self.min_segments, self.hold_bad_ms
         )
 
     # --------------- Callbacks ---------------
     def on_stop(self, msg: Bool):
         self.estop = bool(msg.data)
 
-    def on_image(self, msg: Image):
-        # Convert + ROI
+    def on_image(self, img_msg: Image):
+        # Convert to BGR
         try:
-            bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            bgr = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="bgr8")
         except Exception as e:
             rospy.logwarn_throttle(2.0, "cv_bridge error: %s", e)
             return
 
         H, W = bgr.shape[:2]
-        y0 = int(np.clip(self.roi_top * H, 0, H - 2))
-        y1 = int(np.clip(self.roi_bot * H, y0 + 2, H))
-        roi = bgr[y0:y1, :]
-        h, w = roi.shape[:2]
 
-        # Grass mask: HSV AND (S,V) + LAB a<=th, then OR
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+        # ----- Build trapezoid ROI mask -----
+        y_top = int(clamp(self.roi_y_top * H, 0, H - 2))
+        y_bot = int(clamp(self.roi_y_bot * H, y_top + 2, H))
+        roi_h = y_bot - y_top
+        if roi_h < 4:
+            return  # degenerate
 
-        mask_h = cv2.inRange(hsv[:, :, 0], self.h_lo, self.h_hi)
-        mask_s = cv2.inRange(hsv[:, :, 1], self.s_lo, 255)
-        mask_v = cv2.inRange(hsv[:, :, 2], self.v_lo, 255)
-        mask_hsv = cv2.bitwise_and(mask_h, cv2.bitwise_and(mask_s, mask_v))
+        # Polygon: trapezoid vertices (clockwise)
+        top_w = int(self.roi_top_width_frac * W)
+        x_top_l = (W - top_w) // 2
+        x_top_r = x_top_l + top_w
 
-        mask_lab = cv2.inRange(lab[:, :, 1], 0, self.lab_a_max)
+        roi_poly = np.array([
+            [0,     y_bot],
+            [W,     y_bot],
+            [x_top_r, y_top],
+            [x_top_l, y_top]
+        ], dtype=np.int32)
 
-        grass = cv2.bitwise_or(mask_hsv, mask_lab)
+        mask_full = np.zeros((H, W), dtype=np.uint8)
+        cv2.fillConvexPoly(mask_full, roi_poly, 255)
 
-        # Morphology
-        if self.close_kernel > 1:
-            k = np.ones((self.close_kernel, self.close_kernel), np.uint8)
-            grass = cv2.morphologyEx(grass, cv2.MORPH_CLOSE, k)
-        if self.open_kernel > 1:
-            k = np.ones((self.open_kernel, self.open_kernel), np.uint8)
-            grass = cv2.morphologyEx(grass, cv2.MORPH_OPEN, k)
+        # ----- Preprocess edges (Canny) -----
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         if self.blur_ksize >= 3 and self.blur_ksize % 2 == 1:
-            grass = cv2.medianBlur(grass, self.blur_ksize)
+            gray = cv2.GaussianBlur(gray, (self.blur_ksize, self.blur_ksize), 0)
 
-        # Confidence: only lower bound
-        ratio = float(np.count_nonzero(grass)) / float(max(1, grass.size))
-        if ratio < self.min_grass_ratio:
-            # Not enough signal → hold then stop
-            self._hold_or_stop("LOW RATIO")
-            dbg = self._make_debug(bgr, y0, y1, grass, 0.0, 0.0, None, 0.0, 0.0, ratio)
-            self._publish_debug(dbg, H, W)
-            rospy.loginfo_throttle(1.0, "[grass-lka] ratio=%.3f (LOW) -> stop/hold", ratio)
+        edges = cv2.Canny(gray, self.canny_low, self.canny_high)
+        edges_roi = cv2.bitwise_and(edges, mask_full)
+        roi = edges_roi[y_top:y_bot, :]
+
+        # ----- HoughLinesP -----
+        lines = cv2.HoughLinesP(
+            roi,
+            rho=self.hough_rho,
+            theta=np.deg2rad(self.hough_theta_deg),
+            threshold=self.hough_thresh,
+            minLineLength=self.hough_min_len,
+            maxLineGap=self.hough_max_gap
+        )
+
+        dbg = bgr.copy()
+        # Draw ROI polygon
+        cv2.polylines(dbg, [roi_poly], isClosed=True, color=(255, 0, 0), thickness=1)
+
+        left_points  = []  # list of (m, b, weight)
+        right_points = []  # list of (m, b, weight)
+        total_segments = 0
+
+        if lines is not None:
+            total_segments = len(lines)
+            for ln in lines:
+                x1, y1, x2, y2 = ln[0]
+                # Convert from ROI coords to full image coords (for drawing)
+                y1f, y2f = y1 + y_top, y2 + y_top
+
+                dx = float(x2 - x1)
+                dy = float(y2 - y1)
+                if abs(dx) < 1e-3:
+                    continue  # vertical degenerate
+                m = dy / dx  # NOTE: y grows downward
+                if abs(m) < self.slope_min:
+                    continue  # too horizontal
+
+                b = (y1 - m * x1)  # intercept in ROI coordinates
+                length = np.hypot(dx, dy)
+                weight = max(5.0, length)  # longer lines weigh more
+
+                if m < 0:
+                    left_points.append((m, b, weight))
+                    color = (0, 255, 0)
+                else:
+                    right_points.append((m, b, weight))
+                    color = (0, 200, 200)
+
+                # draw the segment on debug
+                cv2.line(dbg, (x1, y1f), (x2, y2f), color, 2)
+
+        # Evaluate lane borders at a fixed y inside ROI
+        y_eval = int(clamp(self.y_eval_frac * roi_h, 0, roi_h - 1))
+        x_left, x_right, have_left, have_right = None, None, False, False
+
+        def weighted_x_at_y(eval_y, items):
+            """items: list of (m,b,w) in ROI coords; return weighted average x at y=eval_y"""
+            xs = []
+            ws = []
+            for m, b, w in items:
+                if abs(m) < 1e-6:
+                    continue
+                x = (eval_y - b) / m
+                xs.append(x)
+                ws.append(w)
+            if not xs:
+                return None
+            xs = np.array(xs)
+            ws = np.array(ws)
+            return float(np.average(xs, weights=ws))
+
+        if left_points:
+            x_left = weighted_x_at_y(y_eval, left_points)
+            if x_left is not None:
+                have_left = True
+        if right_points:
+            x_right = weighted_x_at_y(y_eval, right_points)
+            if x_right is not None:
+                have_right = True
+
+        # If not enough segments overall OR neither side found -> hold or stop
+        if total_segments < self.min_segments or (not have_left and not have_right):
+            self._hold_or_stop()
+            self._publish_debug(dbg)
+            rospy.loginfo_throttle(1.0, "[hough] segments=%d, left=%s right=%s -> hold/stop",
+                                   total_segments, str(have_left), str(have_right))
             return
 
-        # Build vertical weights
-        yy = (np.arange(h).astype(np.float32) / max(1.0, h - 1))
-        weights_y = np.power(yy, self.gamma_y).reshape(h, 1)
+        # Infer missing side using lane_width
+        lane_w_px = self.lane_width_frac * float(W)
+        if have_left and not have_right:
+            x_right = x_left + lane_w_px
+        elif have_right and not have_left:
+            x_left = x_right - lane_w_px
 
-        # Optional ignore band around center
-        if self.center_ignore_frac > 1e-3:
-            cx = int(0.5 * w)
-            half = int(0.5 * self.center_ignore_frac * w)
-            grass[:, max(0, cx - half):min(w, cx + half)] = 0
+        # Bound to image
+        x_left  = clamp(float(x_left),  0.0, float(W - 1))
+        x_right = clamp(float(x_right), 0.0, float(W - 1))
 
-        # Weighted areas left vs right
-        g = (grass > 0).astype(np.float32)
-        g_w = g * weights_y
+        # Lane center at eval_y
+        lane_center = 0.5 * (x_left + x_right)
+        img_center  = 0.5 * W
+        # Lateral error: >0 => lane center is to the left of image center -> steer right (depending on sign convention)
+        err = (img_center - lane_center) / (0.5 * W)
 
-        area_left  = float(np.sum(g_w[:, :w // 2]))
-        area_right = float(np.sum(g_w[:, w // 2:]))
-        total = area_left + area_right
-        if total <= 1e-6:
-            self._hold_or_stop("ZERO TOTAL")
-            dbg = self._make_debug(bgr, y0, y1, grass, 0.0, 0.0, None, 0.0, 0.0, ratio)
-            self._publish_debug(dbg, H, W)
-            rospy.loginfo_throttle(1.0, "[grass-lka] total=0 -> stop/hold")
-            return
+        # Heading error: use average slope sign (convert to small angle in radians)
+        # If both sides present, estimate centerline slope from left/right slopes; else use the available side.
+        def avg_slope(items):
+            if not items:
+                return None
+            ms = np.array([m for (m, _, _) in items], dtype=np.float32)
+            ws = np.array([w for (_, _, w) in items], dtype=np.float32)
+            return float(np.average(ms, weights=ws))
 
-        diff = (area_right - area_left) / total
-        self.diff_ema = self.diff_alpha * diff + (1.0 - self.diff_alpha) * self.diff_ema
-        err = self.diff_ema
-        if abs(err) < self.deadband:
-            err = 0.0
+        mL = avg_slope(left_points)
+        mR = avg_slope(right_points)
+        if mL is not None and mR is not None:
+            m_center = 0.5 * (mL + mR)
+        elif mL is not None:
+            m_center = mL
+        elif mR is not None:
+            m_center = mR
+        else:
+            m_center = 0.0
 
-        # PD(+I)
+        # Convert slope to heading error. y increases downward; small-angle approx:
+        heading = -np.arctan(m_center)  # negative to make "right-leaning" => positive correction
+        # PD + heading
         t = rospy.get_time()
         dt = max(1e-3, t - self.prev_t)
         d_err = (err - self.prev_err) / dt
         self.prev_err, self.prev_t = err, t
 
-        if self.ki > 0.0:
-            self.i_err = float(np.clip(self.i_err + err * dt, -0.8, 0.8))
-        else:
-            self.i_err = 0.0
-
-        steer = self.kp * err + self.kd * d_err + self.ki * self.i_err
+        steer = self.kp * err + self.kd * d_err + self.k_heading * float(heading)
+        if self.invert_steer:
+            steer = -steer
         steer = clamp(steer, -self.steer_limit, self.steer_limit)
 
         # Speed governor
         steer_ratio = abs(steer) / max(1e-6, self.steer_limit)
-        # confidence factor grows with ratio (bounded [conf_floor..1])
-        conf_factor = self.conf_floor + (1.0 - self.conf_floor) * np.clip(ratio / 0.35, 0.0, 1.0)
-        speed = self.target_speed * (1.0 - self.steer_slowdown * steer_ratio) * conf_factor
-        speed = clamp(speed, self.min_speed, self.target_speed)
+        speed = self.target_speed * (1.0 - self.steer_slowdown * steer_ratio)
+        speed = max(self.min_speed, speed)
 
         if self.estop:
-            speed = 0.0
-            steer = 0.0
+            speed, steer = 0.0, 0.0
 
+        # Publish
         cmd = AckermannDrive()
         cmd.speed = float(speed)
         cmd.steering_angle = float(steer)
@@ -209,51 +296,41 @@ class VisionLKA:
         self.last_cmd = cmd
         self.last_ok_t = rospy.Time.now()
 
-        rospy.loginfo_throttle(1.0,
-            "[grass-lka] ratio=%.3f L=%.0f R=%.0f err=%+.3f de=%+.3f steer=%+.2f v=%.2f",
-            ratio, area_left, area_right, err, d_err, steer, speed)
+        # Debug overlays
+        # draw y_eval line within ROI
+        y_eval_full = y_top + y_eval
+        cv2.line(dbg, (0, y_eval_full), (W - 1, y_eval_full), (200, 200, 200), 1)
+        # draw left/right/center points
+        cv2.circle(dbg, (int(x_left),  y_eval_full), 4, (0, 255, 0), -1)
+        cv2.circle(dbg, (int(x_right), y_eval_full), 4, (0, 255, 0), -1)
+        cv2.circle(dbg, (int(lane_center), y_eval_full), 4, (0, 0, 255), -1)
+        cv2.line(dbg, (int(W/2), y_eval_full-20), (int(W/2), y_eval_full+20), (255, 0, 0), 1)
 
-        dbg = self._make_debug(bgr, y0, y1, grass, area_left, area_right, err, steer, speed, ratio)
-        self._publish_debug(dbg, H, W)
+        txt = f"seg={total_segments} L={have_left} R={have_right} err={err:+.2f} de={d_err:+.2f} head={float(heading):+.2f} st={steer:+.2f} v={speed:.2f}"
+        cv2.putText(dbg, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1, cv2.LINE_AA)
+        self._publish_debug(dbg)
+
+        rospy.loginfo_throttle(1.0, "[hough] " + txt)
 
     # --------------- Helpers ---------------
-    def _hold_or_stop(self, _reason: str):
-        if (rospy.Time.now() - self.last_ok_t).to_sec() * 1000.0 < self.hold_bad_ms:
-            self.pub_cmd.publish(self.last_cmd)
+    def _hold_or_stop(self):
+        # Hold last non-zero command for a short period, then stop
+        if (rospy.Time.now() - self.last_ok_t).to_sec() * 1000.0 < self.hold_bad_ms and not self.estop:
+            cmd = self.last_cmd
+            if cmd.speed <= 1e-3:
+                cmd = AckermannDrive(speed=self.min_speed, steering_angle=0.0)
+            self.pub_cmd.publish(cmd)
         else:
-            self.pub_cmd.publish(AckermannDrive())
+            self.pub_cmd.publish(AckermannDrive(speed=0.0, steering_angle=0.0))
 
-    def _make_debug(self, bgr, y0, y1, grass_mask, area_L, area_R, err, steer, speed, ratio):
-        H, W = bgr.shape[:2]
-        canv = bgr.copy()
-        roi_h, roi_w = grass_mask.shape[:2]
-        mask_color = np.zeros((roi_h, roi_w, 3), np.uint8)
-        mask_color[:, :, 1] = grass_mask  # green overlay
-        canv[y0:y1, :] = cv2.addWeighted(canv[y0:y1, :], 1.0, mask_color, 0.45, 0)
-
-        cx = W // 2
-        cv2.line(canv, (cx, y0), (cx, y1), (255, 0, 0), 1)
-
-        ytxt = 24
-        def put(s):
-            nonlocal ytxt
-            cv2.putText(canv, s, (10, ytxt), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1, cv2.LINE_AA)
-            ytxt += 22
-
-        put("Grass-LKA (area-balance)")
-        put(f"ratio={ratio:.3f} L={area_L:.0f} R={area_R:.0f}")
-        if err is not None:
-            put(f"err={err:+.3f} steer={steer:+.2f} v={speed:.2f} m/s")
-        return canv
-
-    def _publish_debug(self, bgr_full, H, W):
+    def _publish_debug(self, bgr):
         try:
-            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(bgr_full, encoding='bgr8'))
+            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(bgr, encoding='bgr8'))
         except Exception as e:
             rospy.logwarn_throttle(2.0, "debug publish failed: %s", e)
 
 
 if __name__ == "__main__":
-    VisionLKA()
+    VisionLKA_Hough()
     rospy.spin()
 
