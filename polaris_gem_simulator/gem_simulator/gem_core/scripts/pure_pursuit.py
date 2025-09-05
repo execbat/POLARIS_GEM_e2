@@ -44,16 +44,16 @@ class PurePursuitMinimal:
         if self.state != RUNNING:
             # public zero cmd
             cmd = AckermannDrive()
-            cmd.drive.speed = 0.0
-            cmd.drive.steering_angle = 0.0
+            cmd.speed = 0.0
+            cmd.steering_angle = 0.0
             self.pub_cmd.publish(cmd)
             return
 
         # minimal controller
         # postind a slow speed
         cmd = AckermannDrive()
-        cmd.drive.speed = rospy.get_param("~cruise_speed", 1.0)
-        cmd.drive.steering_angle = 0.0
+        cmd.speed = rospy.get_param("~cruise_speed", 1.0)
+        cmd.steering_angle = 0.0
         self.pub_cmd.publish(cmd)
 
     def publish_status(self):
