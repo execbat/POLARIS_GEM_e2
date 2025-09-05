@@ -2,7 +2,7 @@
 import rospy, cv2, numpy as np
 from sensor_msgs.msg import Image
 from ackermann_msgs.msg import AckermannDrive
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 from cv_bridge import CvBridge
 
 class VisionLKA:
