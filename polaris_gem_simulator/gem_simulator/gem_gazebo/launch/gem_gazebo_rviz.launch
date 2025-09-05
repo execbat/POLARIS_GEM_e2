@@ -99,7 +99,21 @@
     <node if="$(arg use_rviz)" name="rviz_$(arg robot_name)" pkg="rviz" type="rviz" args="-d $(find gem_description)/config_rviz/gem_gazebo_rviz.rviz" />
     
     
-    
+
+
+
+    <!-- Vision LKA -->
+    <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen">
+      <remap from="image" to="/gem/front_single_camera/image_raw"/>   <!-- ТВОЙ топик камеры -->
+      <param name="target_speed" value="1.5"/>
+      <param name="kp" value="0.015"/>
+      <param name="kd" value="0.05"/>
+      <param name="k_heading" value="0.005"/>
+      <param name="steer_limit" value="0.5"/>
+      <param name="s_thresh" value="60"/>
+      <param name="v_thresh" value="50"/>
+    </node>
+   
     
     <!-- bridge: /gazebo/model_states -> /gem/odom -->
     <node pkg="gem_nav" type="model_states_to_odom.py" name="model_states_to_odom" output="screen">
@@ -108,8 +122,6 @@
       <param name="child_frame" value="base_link"/>
       <param name="odom_topic"  value="odom"/> 
     </node>
-    
-    
     
     
     <!-- NAV: Task Planner -->
@@ -164,10 +176,12 @@
     <!-- Mux: chosing of active path-tracking controller -->
     <node pkg="gem_core" type="controller_mux.py" name="controller_mux" output="screen">
       <param name="output_cmd_topic" value="$(arg output_cmd_topic)"/>
-      <param name="default_controller" value="$(arg controller)"/>
+      <!--param name="default_controller" value="$(arg controller)"/-->
+      <param name="default_controller" value="vision_lka"/>
       <rosparam param="inputs">
         pure_pursuit: "/pure_pursuit/cmd"
         stanley:      "/stanley/cmd"
+        vision_lka:   "/vision_lka/cmd"
         # mpc:        "/mpc/cmd"   
       </rosparam>
     </node>

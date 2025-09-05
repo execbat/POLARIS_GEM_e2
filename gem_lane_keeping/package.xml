@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>gem_lane_keeping</name>
+  <version>0.0.1</version>
+  <description>Vision-based lane keeping for GEM e2 (Gazebo)</description>
+  <maintainer email="evgeniyy.dushkin@gmail.com">Evgenii Dushkin</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ackermann_msgs</depend>
+  <depend>image_transport</depend>
+  <depend>cv_bridge</depend>
+</package>
