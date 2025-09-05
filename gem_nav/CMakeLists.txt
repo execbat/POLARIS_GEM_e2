@@ -15,6 +15,7 @@ catkin_package(
 
 catkin_install_python(PROGRAMS
   scripts/task_planner.py
+  scripts/model_states_to_odom.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

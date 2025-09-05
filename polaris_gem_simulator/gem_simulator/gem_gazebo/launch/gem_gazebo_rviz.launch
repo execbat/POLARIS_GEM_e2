@@ -101,7 +101,13 @@
     
     
     
-    
+    <!-- bridge: /gazebo/model_states -> /gem/odom -->
+    <node pkg="gem_nav" type="model_states_to_odom.py" name="model_states_to_odom" output="screen">
+      <param name="model_name"  value="$(arg robot_name)"/>
+      <param name="frame_id"    value="odom"/>
+      <param name="child_frame" value="base_link"/>
+      <param name="odom_topic"  value="odom"/> 
+    </node>
     
     
     
