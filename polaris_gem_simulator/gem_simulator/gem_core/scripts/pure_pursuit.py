@@ -2,7 +2,7 @@
 import rospy
 from std_msgs.msg import Bool, UInt8
 from nav_msgs.msg import Path
-from ackermann_msgs.msg import AckermannDriveStamped
+from ackermann_msgs.msg import AckermannDriveStamped, AckermannDrive
 
 IDLE, RUNNING, PAUSED, DONE, ABORTED = range(5)
 
@@ -12,7 +12,7 @@ class PurePursuitMinimal:
         self.has_path = False
 
         # relative names — they are mapped on  /pure_pursuit/* inside of launch  
-        self.pub_cmd    = rospy.Publisher("cmd", AckermannDriveStamped, queue_size=10)
+        self.pub_cmd    = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
         self.pub_status = rospy.Publisher("status", UInt8, queue_size=1, latch=True)
 
         rospy.Subscriber("enable", Bool, self.on_enable)
@@ -43,7 +43,7 @@ class PurePursuitMinimal:
     def step(self, _):
         if self.state != RUNNING:
             # public zero cmd
-            cmd = AckermannDriveStamped()
+            cmd = AckermannDrive()
             cmd.drive.speed = 0.0
             cmd.drive.steering_angle = 0.0
             self.pub_cmd.publish(cmd)
@@ -51,7 +51,7 @@ class PurePursuitMinimal:
 
         # minimal controller
         # postind a slow speed
-        cmd = AckermannDriveStamped()
+        cmd = AckermannDrive()
         cmd.drive.speed = rospy.get_param("~cruise_speed", 1.0)
         cmd.drive.steering_angle = 0.0
         self.pub_cmd.publish(cmd)
