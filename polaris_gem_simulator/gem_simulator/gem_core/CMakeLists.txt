@@ -31,5 +31,6 @@ catkin_install_python(PROGRAMS
   scripts/supervisor.py
   scripts/controller_mux.py
   scripts/health_sim.py
+  scripts/pure_pursuit.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
