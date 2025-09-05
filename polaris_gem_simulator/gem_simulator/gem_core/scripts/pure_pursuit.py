@@ -13,10 +13,9 @@ class PurePursuitMinimal:
 
         # relative names — they are mapped on  /pure_pursuit/* inside of launch  
         self.pub_cmd    = rospy.Publisher("cmd", AckermannDrive, queue_size=10)
-        self.pub_status = rospy.Publisher("status", UInt8, queue_size=1, latch=True)
-
-        rospy.Subscriber("enable", Bool, self.on_enable)
-        rospy.Subscriber("path", Path, self.on_path)
+        self.pub_status = rospy.Publisher("/pure_pursuit/status", UInt8, queue_size=1, latch=True)
+        rospy.Subscriber("/pure_pursuit/path", Path, self.on_path)
+        rospy.Subscriber("/pure_pursuit/enable", Bool, self.on_enable)
 
         self.state = IDLE
         self.publish_status()
@@ -25,10 +24,12 @@ class PurePursuitMinimal:
 
     def on_enable(self, msg):
         self.enabled = bool(msg.data)
+        rospy.loginfo("pure_pursuit: ENABLE = %s", self.enabled)
         self._update_state()
 
     def on_path(self, msg):
         self.has_path = len(msg.poses) > 0
+        rospy.loginfo("pure_pursuit: PATH received, poses=%d", len(msg.poses))
         self._update_state()
 
     def _update_state(self):
@@ -58,6 +59,7 @@ class PurePursuitMinimal:
 
     def publish_status(self):
         self.pub_status.publish(UInt8(self.state))
+        rospy.loginfo_throttle(1.0, "pure_pursuit: state=%d", self.state)
 
 if __name__ == "__main__":
     rospy.init_node("pure_pursuit")
