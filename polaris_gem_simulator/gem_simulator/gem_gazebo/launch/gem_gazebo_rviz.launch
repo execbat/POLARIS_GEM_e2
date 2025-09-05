@@ -94,7 +94,7 @@
       <rosparam file="$(find gem_gazebo)/config/gem_ackermann_control_params.yaml" command="load"/>
     </node>
     
-    <node name="gem_cmdvel_$(arg robot_name)" pkg="gem_gazebo" type="gem_cmdvel.py" />
+    <!--node name="gem_cmdvel_$(arg robot_name)" pkg="gem_gazebo" type="gem_cmdvel.py" /-->
     
     <node if="$(arg use_rviz)" name="rviz_$(arg robot_name)" pkg="rviz" type="rviz" args="-d $(find gem_description)/config_rviz/gem_gazebo_rviz.rviz" />
     
