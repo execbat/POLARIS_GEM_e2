@@ -112,37 +112,42 @@
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>  
       
       <param name="target_speed" value="1.5"/>
-      <param name="kp" value="0.015"/>
-      <param name="kd" value="0.05"/>
-      <param name="k_heading" value="0.005"/>
-      <param name="steer_limit" value="1.00"/>
-      <param name="s_thresh" value="100"/>
-      <param name="v_thresh" value="35"/>
-      <rosparam>
-        target_speed: 1.5
-        min_speed: 0.6
-        steer_limit: 0.55
-        kp: 0.9
-        kd: 0.15
-        k_heading: 0.35
-        roi_y_top: 0.60
-        roi_y_bot: 1.0
-        roi_top_width_frac: 0.30
-        blur_ksize: 5
-        canny_low: 60
-        canny_high: 150
-        hough_rho: 1.0
-        hough_theta_deg: 1
-        hough_thresh: 30
-        hough_min_len: 25
-        hough_max_gap: 20
-        slope_min: 0.35
-        lane_width_frac: 0.45
-        y_eval_frac: 0.92
-        min_segments: 2
-        hold_bad_ms: 500
-        min_valid_sides: 1
-      </rosparam>
+      <param name="min_speed"    value="0.7"/>
+      <param name="kp"           value="0.7"/>
+      <param name="kd"           value="0.10"/>
+      <param name="k_heading"    value="0.45"/>
+      <param name="steer_limit"  value="0.6"/>
+      <param name="steer_slowdown" value="0.65"/>
+      <!-- roi -->
+      <param name="roi_y_top" value="0.52"/>
+      <param name="roi_y_bot" value="1.0"/>
+      <param name="roi_top_width_frac" value="0.65"/>
+      <!-- canny/color -->
+      <param name="canny_low"  value="40"/>
+      <param name="canny_high" value="120"/>
+      <param name="white_v_min" value="180"/>
+      <param name="white_s_max" value="60"/>
+      <param name="yellow_h_lo" value="15"/>
+      <param name="yellow_h_hi" value="40"/>
+      <param name="yellow_s_min" value="80"/>
+      <param name="yellow_v_min" value="80"/>
+      <!-- scans -->
+      <rosparam param="scan_rows">[0.60, 0.72, 0.84, 0.92, 0.97]</rosparam>
+      <param name="min_valid_rows" value="2"/>
+      <param name="min_lane_width_px" value="22"/>
+      <param name="min_mask_area" value="150"/>
+      <param name="y_eval_frac" value="0.95"/>
+      <param name="lane_width_frac" value="0.52"/>
+      <!-- fallback -->
+      <param name="use_green_balance" value="true"/>
+      <param name="green_h_lo"  value="30"/>
+      <param name="green_h_hi"  value="95"/>
+      <param name="green_s_min" value="60"/>
+      <param name="green_v_min" value="20"/>
+      <param name="min_green_cols" value="200"/>
+      <param name="hold_bad_ms" value="350"/>
+      <!-- debug -->
+      <param name="debug_overlay" value="true"/>
     </node>
    
     
