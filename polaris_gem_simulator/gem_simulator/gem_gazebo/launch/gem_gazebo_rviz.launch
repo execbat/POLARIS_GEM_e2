@@ -113,11 +113,11 @@
       
       <param name="target_speed" value="1.2"/>
       <param name="min_speed"    value="0.4"/>
-      <param name="kp"           value="0.012"/>
-      <param name="kd"           value="0.03"/>
-      <param name="k_heading"    value="0.060"/>
+      <param name="kp"           value="0.024"/>
+      <param name="kd"           value="0.12"/>
+      <param name="k_heading"    value="0.025"/>
       <param name="steer_limit"  value="0.60"/>
-      <param name="steer_slowdown" value="0.9"/>
+      <param name="steer_slowdown" value="0.15"/>
       <!-- roi -->
       <param name="roi_y_top" value="0.52"/>
       <param name="roi_y_bot" value="1.0"/>
