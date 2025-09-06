@@ -50,13 +50,13 @@ class VisionLKA:
         self.min_lane_w_px = rospy.get_param("~min_lane_width_px", 20)
 
         # --- Control ---
-        self.base_speed    = rospy.get_param("~target_speed", 1.5)
+        self.base_speed    = rospy.get_param("~target_speed", 1.2)
         self.kp            = rospy.get_param("~kp", 0.018)
         self.kd            = rospy.get_param("~kd", 0.06)
-        self.k_heading     = rospy.get_param("~k_heading", 0.010)
+        self.k_heading     = rospy.get_param("~k_heading", 0.007)
         self.steer_limit   = rospy.get_param("~steer_limit", 0.40)
-        self.max_accel     = rospy.get_param("~max_accel", 0.6)     # m/s^2
-        self.max_decel     = rospy.get_param("~max_decel", 1.2)     # m/s^2
+        self.max_accel     = rospy.get_param("~max_accel", 0.3)     # m/s^2
+        self.max_decel     = rospy.get_param("~max_decel", 1.0)     # m/s^2
         self.speed_turn_k  = rospy.get_param("~speed_turn_k", 0.85) # slowdown factor per |steer|
         self.steer_alpha   = rospy.get_param("~steer_alpha", 0.25)  # low-pass for steering (0..1)
         self.hold_bad_ms   = rospy.get_param("~hold_bad_ms", 400)
