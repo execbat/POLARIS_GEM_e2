@@ -111,12 +111,12 @@
       <remap from="debug"         to="/vision_lka/debug"/>
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>  
       
-      <param name="target_speed" value="1.5"/>
-      <param name="min_speed"    value="0.7"/>
-      <param name="kp"           value="0.7"/>
-      <param name="kd"           value="0.10"/>
-      <param name="k_heading"    value="0.45"/>
-      <param name="steer_limit"  value="0.6"/>
+      <param name="target_speed" value="1.2"/>
+      <param name="min_speed"    value="0.5"/>
+      <param name="kp"           value="0.015"/>
+      <param name="kd"           value="0.050"/>
+      <param name="k_heading"    value="0.005"/>
+      <param name="steer_limit"  value="0.40"/>
       <param name="steer_slowdown" value="0.65"/>
       <!-- roi -->
       <param name="roi_y_top" value="0.52"/>
@@ -132,9 +132,9 @@
       <param name="yellow_s_min" value="80"/>
       <param name="yellow_v_min" value="80"/>
       <!-- scans -->
-      <rosparam param="scan_rows">[0.60, 0.72, 0.84, 0.92, 0.97]</rosparam>
-      <param name="min_valid_rows" value="2"/>
-      <param name="min_lane_width_px" value="22"/>
+      <rosparam param="scan_rows">[0.86,0.90,0.94,0.97]</rosparam>
+      <param name="min_valid_rows" value="1"/>
+      <param name="min_lane_width_px" value="12"/>
       <param name="min_mask_area" value="150"/>
       <param name="y_eval_frac" value="0.95"/>
       <param name="lane_width_frac" value="0.52"/>
@@ -145,7 +145,7 @@
       <param name="green_s_min" value="60"/>
       <param name="green_v_min" value="20"/>
       <param name="min_green_cols" value="200"/>
-      <param name="hold_bad_ms" value="350"/>
+      <param name="hold_bad_ms" value="600"/>
       <!-- debug -->
       <param name="debug_overlay" value="true"/>
     </node>
