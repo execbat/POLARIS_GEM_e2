@@ -113,8 +113,8 @@
       
       <param name="target_speed" value="1.2"/>
       <param name="min_speed"    value="0.5"/>
-      <param name="kp"           value="0.015"/>
-      <param name="kd"           value="0.050"/>
+      <param name="kp"           value="0.035"/>
+      <param name="kd"           value="0.070"/>
       <param name="k_heading"    value="0.005"/>
       <param name="steer_limit"  value="0.40"/>
       <param name="steer_slowdown" value="0.65"/>
