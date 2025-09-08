@@ -102,7 +102,7 @@
 
 
 
-    <!-- Vision LKA -->
+    <!-- Follow-left-line LKA -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
       <remap from="image" to="/gem/front_single_camera/image_raw"/>
       <remap from="cmd"           to="/vision_lka/cmd"/>
@@ -110,59 +110,57 @@
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>
 
       <!-- PD + heading -->
-      <param name="kp"         value="0.035"/>
-      <param name="kd"         value="0.10"/>
-      <param name="k_heading"  value="0.12"/>
-      <param name="der_alpha"  value="0.7"/>
+      <param name="kp" value="0.035"/>
+      <param name="kd" value="0.10"/>
+      <param name="k_heading" value="0.12"/>
+      <param name="der_alpha" value="0.7"/>
 
-      <!-- рулёжка -->
-      <param name="steer_limit"       value="0.75"/>
-      <param name="steer_rate_limit"  value="1.6"/>
-      <param name="steer_alpha"       value="0.20"/>  <!-- EMA сглаживание руля -->
-      <param name="steer_sign"        value="-1.0"/>  <!-- инверт при необходимости -->
+      <!-- steering -->
+      <param name="steer_limit" value="0.75"/>
+      <param name="steer_rate_limit" value="1.4"/>
+      <param name="steer_alpha" value="0.22"/>
+      <param name="steer_sign" value="-1.0"/>
 
-      <!-- скорость / профиль -->
-      <param name="target_speed"   value="0.8"/>
-      <param name="min_speed"      value="0.35"/>
-      <param name="k_curve_speed"  value="6.0"/>  <!-- замедление по кривизне -->
-      <param name="steer_slowdown" value="0.20"/> <!-- замедление по |рулю| -->
-      <param name="recovery_speed" value="0.50"/>
+      <!-- speed -->
+      <param name="target_speed" value="0.8"/>
+      <param name="min_speed" value="0.35"/>
+      <param name="recovery_speed" value="0.5"/>
+      <param name="k_curve_speed" value="6.0"/>
+      <param name="steer_slowdown" value="0.20"/>
 
-      <!-- динамика / лимиты -->
-      <param name="wheelbase"     value="1.2"/>
-      <param name="a_accel_max"   value="0.35"/>
-      <param name="a_brake_max"   value="1.20"/>
-      <param name="a_lat_max"     value="1.80"/>
+      <!-- dynamics limits -->
+      <param name="wheelbase" value="1.2"/>
+      <param name="a_accel_max" value="0.35"/>
+      <param name="a_brake_max" value="1.20"/>
+      <param name="a_lat_max" value="1.80"/>
 
-      <!-- ROI и сканы -->
+      <!-- ROI & scans -->
       <param name="roi_top" value="0.60"/>
-      <rosparam param="scan_rows">[0.70,0.80,0.90,0.96]</rosparam>
+      <rosparam param="scan_rows">[0.72, 0.82, 0.90, 0.96]</rosparam>
       <param name="min_valid_rows" value="2"/>
-      <param name="lane_w_min_px" value="100"/>
-      <param name="lane_w_max_px" value="340"/>
-      <param name="lane_w_ema" value="0.20"/>
-      <param name="lane_w_px_default_frac" value="0.28"/>
-      <param name="lane_center_alpha" value="0.25"/>
       <param name="edge_min_run_px" value="16"/>
+      <param name="lane_center_alpha" value="0.25"/>
+      <param name="max_center_jump_frac" value="0.06"/>
       <param name="hold_bad_ms" value="600"/>
       <param name="stop_if_lost" value="false"/>
 
-      <!-- цветовые пороги -->
-      <param name="v_thresh"    value="35"/>   <!-- white: V low -->
-      <param name="s_thresh"    value="110"/>  <!-- white: S high -->
-      <param name="hls_L_min"   value="190"/>  <!-- white: L high -->
+      <!-- desired offset from the LEFT yellow line -->
+      <!-- If you roughly know lane width in pixels, set left_offset_px to ~0.5 * lane_width_px
+       and remove/ignore left_offset_frac. Otherwise start with 0.38 of ROI width: -->
+      <param name="left_offset_px" value="-1"/>
+      <param name="left_offset_frac" value="0.38"/>
+
+      <!-- visibility-speed scaling -->
+      <param name="one_side_speed_scale" value="0.85"/>
+
+      <!-- robust yellow thresholds -->
       <param name="yellow_h_lo" value="10"/>
       <param name="yellow_h_hi" value="60"/>
       <param name="yellow_s_min" value="60"/>
       <param name="yellow_v_min" value="60"/>
       <param name="lab_b_min" value="140"/>
-      
-      <!-- fallback control -->
-      <param name="use_white_fallback" value="true"/>
-      <param name="min_yellow_px" value="400"/>
-      <param name="white_edge_band_frac" value="0.25"/>
-      <param name="center_ignore_frac" value="0.18"/>
     </node>
+
    
     
     <!-- bridge: /gazebo/model_states -> /gem/odom -->
