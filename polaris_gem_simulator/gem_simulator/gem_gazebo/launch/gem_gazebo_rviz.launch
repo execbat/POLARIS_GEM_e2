@@ -123,10 +123,10 @@
       <param name="steer_limit"        value="0.90"/>
       <param name="steer_rate_limit"   value="2.0"/>
       <param name="steer_alpha"        value="0.0"/>   
-      <param name="steer_sign"         value="-1.0"/>   <!-- -1 if steering is inverted-->
+      <param name="steer_sign"         value="1.0"/>   <!-- -1 if steering is inverted-->
 
       <!-- speed profile -->
-      <param name="target_speed"   value="1.5"/>
+      <param name="target_speed"   value="3.5"/>
       <param name="min_speed"      value="0.6"/>
       <param name="k_curve_speed"  value="8.0"/>
       <param name="steer_slowdown" value="0.15"/>
