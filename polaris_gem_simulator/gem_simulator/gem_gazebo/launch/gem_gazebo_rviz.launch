@@ -102,14 +102,19 @@
 
 
 
-    <!-- Vision LKA (follow-left-line) -->
+    <!-- Vision LKA: follow left solid yellow -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
+      <!-- camera -->
       <remap from="image" to="/gem/front_single_camera/image_raw"/>
+      <!-- safety stop (если есть свой топик — отремапь сюда) -->
+      <remap from="/gem/safety/stop" to="/gem/safety/stop"/>
+
+      <!-- where the controller publishes -->
       <remap from="cmd"           to="/vision_lka/cmd"/>
       <remap from="debug"         to="/vision_lka/debug"/>
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>
 
-      <!-- controller -->
+      <!-- controller (PD + heading) -->
       <param name="kp" value="0.035"/>
       <param name="kd" value="0.10"/>
       <param name="k_heading" value="0.12"/>
@@ -119,61 +124,60 @@
       <param name="steer_limit" value="0.75"/>
       <param name="steer_rate_limit" value="1.4"/>
       <param name="steer_alpha" value="0.22"/>
-      <param name="steer_sign" value="-1.0"/>   <!-- auto flips if wrong -->
+      <param name="steer_sign" value="-1.0"/>  <!-- если рулит «наоборот», поставь 1.0 -->
       <param name="steer_bias" value="0.0"/>
 
       <!-- speed & limits -->
       <param name="target_speed" value="0.6"/>
-      <param name="min_speed" value="0.25"/>
+      <param name="min_speed" value="0.30"/>
+      <param name="recovery_speed" value="0.45"/>
       <param name="k_curve_speed" value="6.0"/>
       <param name="steer_slowdown" value="0.20"/>
-      <param name="recovery_speed" value="0.4"/>
       <param name="wheelbase" value="1.2"/>
       <param name="a_accel_max" value="0.35"/>
       <param name="a_brake_max" value="1.2"/>
       <param name="a_lat_max" value="1.8"/>
 
       <!-- ROI & scans -->
-      <param name="roi_top" value="0.60"/>
-      <param name="roi_top_boot" value="0.55"/>
-      <rosparam param="scan_rows">[0.74,0.84,0.92,0.98]</rosparam>
+      <param name="roi_top" value="0.58"/>
+      <param name="roi_top_boot" value="0.58"/>
+      <rosparam param="scan_rows">[0.75, 0.85, 0.93, 0.98]</rosparam>
       <param name="min_valid_rows" value="2"/>
+      <param name="edge_min_run_px" value="14"/>
       <param name="left_search_limit_frac" value="0.70"/>
-      <param name="edge_min_run_px" value="16"/>
       <param name="hold_bad_ms" value="600"/>
+      <param name="stop_if_lost" value="false"/>
 
-      <!-- target placement -->
-      <param name="left_offset_px" value="-1.0"/>        <!-- use fraction mode -->
-      <param name="left_to_center_frac" value="0.60"/>
+      <!-- target placement (between left line and camera center) -->
+      <param name="left_offset_px" value="-1.0"/>      <!-- -1 => использовать frac -->
+      <param name="left_to_center_frac" value="0.60"/> <!-- 0..1 к центру -->
       <param name="center_margin_px" value="20"/>
       <param name="min_offset_margin_px" value="20"/>
       <param name="max_center_jump_frac" value="0.06"/>
       <param name="lane_center_alpha" value="0.25"/>
-      <param name="cam_center_shift_px" value="0.0"/>    <!-- tune if camera not centered -->
+      <param name="cam_center_shift_px" value="0.0"/>  <!-- сдвиг оптики, если камера не по центру -->
 
-      <!-- bootstrap -->
+      <!-- color for yellow + geometry gates (под твой скрин) -->
+      <param name="yellow_h_lo"  value="18"/>
+      <param name="yellow_h_hi"  value="42"/>
+      <param name="yellow_s_min" value="80"/>
+      <param name="yellow_v_min" value="28"/>
+      <param name="lab_b_min"    value="145"/>
+      <param name="left_band_frac"     value="0.62"/>
+      <param name="center_ignore_frac" value="0.18"/>
+      <param name="close_kernel" value="7"/>
+      <param name="open_kernel"  value="5"/>
+
+      <!-- bootstrap (white-in-left-band) -->
       <param name="bootstrap_enable" value="true"/>
-      <param name="bootstrap_frames_confirm" value="8"/>
+      <param name="bootstrap_frames_confirm" value="6"/>
       <param name="bootstrap_speed_scale" value="0.75"/>
-      <param name="left_band_frac" value="0.30"/>
-      <param name="center_ignore_frac" value="0.25"/>
-      <param name="yellow_good_px_threshold" value="300"/>
-
-      <!-- color -->
-      <param name="yellow_h_lo" value="8"/>
-      <param name="yellow_h_hi" value="70"/>
-      <param name="yellow_s_min" value="50"/>
-      <param name="yellow_v_min" value="50"/>
-      <param name="lab_b_min" value="130"/>
+      <param name="yellow_good_px_threshold" value="250"/>
       <param name="s_thresh" value="110"/>
       <param name="v_thresh" value="35"/>
       <param name="hls_L_min" value="190"/>
-
-      <!-- calibration -->
-      <param name="auto_sign_calib" value="true"/>
-      <param name="calib_window" value="20"/>
-      <param name="calib_slope_thr" value="0.02"/>
     </node>
+
 
    
     
