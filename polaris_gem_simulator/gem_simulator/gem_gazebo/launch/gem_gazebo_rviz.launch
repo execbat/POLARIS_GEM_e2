@@ -135,16 +135,17 @@
       <param name="a_lat_max"     value="1.80"/>
 
       <!-- ROI и сканы -->
-      <param name="roi_top"              value="0.60"/>
+      <param name="roi_top" value="0.60"/>
       <rosparam param="scan_rows">[0.70,0.80,0.90,0.96]</rosparam>
-      <param name="min_valid_rows"       value="2"/>
-      <param name="center_ignore_frac"   value="0.18"/> <!-- вырезаем центральную белую -->
-      <param name="lane_w_min_px"        value="100"/>
-      <param name="lane_w_max_px"        value="340"/>
-      <param name="lane_w_ema"           value="0.20"/>
-      <param name="lane_center_alpha"    value="0.25"/>
-      <param name="hold_bad_ms"          value="600"/>
-      <param name="stop_if_lost"         value="false"/>
+      <param name="min_valid_rows" value="2"/>
+      <param name="lane_w_min_px" value="100"/>
+      <param name="lane_w_max_px" value="340"/>
+      <param name="lane_w_ema" value="0.20"/>
+      <param name="lane_w_px_default_frac" value="0.28"/>
+      <param name="lane_center_alpha" value="0.25"/>
+      <param name="edge_min_run_px" value="16"/>
+      <param name="hold_bad_ms" value="600"/>
+      <param name="stop_if_lost" value="false"/>
 
       <!-- цветовые пороги -->
       <param name="v_thresh"    value="35"/>   <!-- white: V low -->
@@ -154,6 +155,13 @@
       <param name="yellow_h_hi" value="60"/>
       <param name="yellow_s_min" value="60"/>
       <param name="yellow_v_min" value="60"/>
+      <param name="lab_b_min" value="140"/>
+      
+      <!-- fallback control -->
+      <param name="use_white_fallback" value="true"/>
+      <param name="min_yellow_px" value="400"/>
+      <param name="white_edge_band_frac" value="0.25"/>
+      <param name="center_ignore_frac" value="0.18"/>
     </node>
    
     
