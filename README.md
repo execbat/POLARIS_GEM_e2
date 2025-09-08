@@ -189,29 +189,6 @@ $ roslaunch gem_gazebo gem_sensor_info.launch
 
 ---
 
-## System Tests (rostest + Gazebo)
-
-This fork implements the following safety scenarios and an integration test. Launch Gazebo/world first, then run tests in a second terminal.
-
-**Launch world (terminal A):**
-```bash
-$ source /opt/ros/noetic/setup.bash
-$ source /ws/devel/setup.bash
-$ roslaunch gem_gazebo gem_gazebo_world.launch
-```
-
-**Run tests (terminal B):**
-```bash
-$ source /opt/ros/noetic/setup.bash
-$ source /ws/devel/setup.bash
-$ rostest gem_system_tests battery_failure.test
-$ rostest gem_system_tests temperature_spike.test
-$ rostest gem_system_tests gps_fluctuation.test
-$ rostest gem_system_tests network_signal_fluctuation.test
-$ rostest gem_system_tests emergency_stop.test
-$ rostest gem_system_tests integration_state_manager_planner.test
-```
-
 ### Scenarios & Expected Outcomes
 
 - **Battery Failure**  
