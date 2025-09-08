@@ -102,7 +102,6 @@
 
 
 
-    <!-- Follow-left-line with robust bootstrap -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
       <remap from="image" to="/gem/front_single_camera/image_raw"/>
       <remap from="cmd"           to="/vision_lka/cmd"/>
@@ -119,7 +118,7 @@
       <param name="steer_limit" value="0.75"/>
       <param name="steer_rate_limit" value="1.4"/>
       <param name="steer_alpha" value="0.22"/>
-      <param name="steer_sign" value="-1.0"/>
+      <param name="steer_sign" value="-1.0"/> <!-- flip to 1.0 if turns the wrong way -->
 
       <!-- speed -->
       <param name="target_speed" value="0.8"/>
@@ -145,16 +144,18 @@
       <param name="hold_bad_ms" value="600"/>
       <param name="stop_if_lost" value="false"/>
 
-      <!-- desired offset to the right of the left line -->
+      <!-- SAFE offset between left border and image center -->
       <param name="left_offset_px" value="-1"/>
-      <param name="left_offset_frac" value="0.38"/>
+      <param name="left_to_center_frac" value="0.60"/>
+      <param name="center_margin_px" value="20"/>
+      <param name="min_offset_margin_px" value="20"/>
 
-      <!-- bootstrap (white in left-side band) -->
+      <!-- robust bootstrap -->
       <param name="bootstrap_enable" value="true"/>
       <param name="bootstrap_frames_confirm" value="8"/>
       <param name="bootstrap_speed_scale" value="0.75"/>
-      <param name="left_band_frac" value="0.35"/>
-      <param name="center_ignore_frac" value="0.20"/>
+      <param name="left_band_frac" value="0.30"/>
+      <param name="center_ignore_frac" value="0.25"/>
       <param name="yellow_good_px_threshold" value="300"/>
 
       <!-- color thresholds -->
