@@ -65,9 +65,12 @@ class VisionLKA:
         
         # ======== LANE GEOMETRY FILTERS (center-line ignore) ========
         self.ignore_center_band = rospy.get_param("~ignore_center_band", True)  
-        self.center_band_frac   = rospy.get_param("~center_band_frac", 0.20)    
+        self.center_band_frac   = rospy.get_param("~center_band_frac", 0.18)    
         self.min_run_px         = rospy.get_param("~min_run_px", 12)            
-        self.prefer_edges       = rospy.get_param("~prefer_edges", True)       
+        self.prefer_edges       = rospy.get_param("~prefer_edges", True)     
+        
+        self.center_beta   = rospy.get_param("~center_beta", 0.30)  
+        self.heading_beta  = rospy.get_param("~heading_beta", 0.50)  
 
         # ======== HOUGH/CANNY (fallback) ========
         self.canny1 = rospy.get_param("~canny1", rospy.get_param("~canny_low", 60))
@@ -76,6 +79,15 @@ class VisionLKA:
         self.hough_min_length  = rospy.get_param("~hough_min_length", 60)
         self.hough_max_gap     = rospy.get_param("~hough_max_gap", 20)
         self.hough_min_angle_deg = rospy.get_param("~hough_min_angle_deg", 15)
+        
+        # lomits
+        self.seg_min_frac         = rospy.get_param("~seg_min_frac", 0.30)  
+        self.center_reject_margin = rospy.get_param("~center_reject_margin", 0.15) 
+
+        # filter state
+        self.center_filt  = None
+        self.heading_filt = 0.0
+
 
         # ======== STATE ========
         self.estop        = False
@@ -129,10 +141,13 @@ class VisionLKA:
         # Primary color mask
         mask_color = self._color_mask(roi)
         if self.ignore_center_band:
-            cx0 = int((0.5 - 0.5*self.center_band_frac) * w)
-            cx1 = int((0.5 + 0.5*self.center_band_frac) * w)
-            cx0 = max(0, min(w-1, cx0));  cx1 = max(0, min(w, cx1))
-            mask_color[:, cx0:cx1] = 0
+            W = mask_color.shape[1]
+            cx0 = int((0.5 - 0.5 * float(self.center_band_frac)) * W)
+            cx1 = int((0.5 + 0.5 * float(self.center_band_frac)) * W)
+            cx0 = max(0, min(W-1, cx0))
+            cx1 = max(0, min(W,   cx1))
+            if cx1 > cx0:
+                mask_color[:, cx0:cx1] = 0
         
         centers, used_y, lane_w_px = self._scan_centers(mask_color)
 
@@ -277,67 +292,71 @@ class VisionLKA:
     def _scan_centers(self, mask):
 
         H, W = mask.shape[:2]
-        centers, used_y, widths = [], [], []
+        centers, used_y = [], []
+        lane_w = None
 
-        
-        cx0 = int((0.5 - 0.5*self.center_band_frac) * W)
-        cx1 = int((0.5 + 0.5*self.center_band_frac) * W)
+        expect_w = float(self.last_lane_w_px) if self.last_lane_w_px is not None else None
+        seg_min = max(6.0, (expect_w or 40.0) * float(self.seg_min_frac))  # px
+        center_forbid_lo = int((0.5 - self.center_reject_margin) * W)
+        center_forbid_hi = int((0.5 + self.center_reject_margin) * W)
 
         for r in self.scan_rows:
-            y_scan = int(H * float(r))
-            y_scan = 0 if y_scan < 0 else H-1 if y_scan >= H else y_scan
-            row = mask[y_scan, :]
-
-            xs = np.flatnonzero(row > 0)
-            if xs.size == 0:
-                continue
-    
-            
-            split_idx = np.where(np.diff(xs) > 1)[0] + 1
-            runs = np.split(xs, split_idx)
+            y = int(H * float(r))
+            y = 0 if y < 0 else H-1 if y >= H else y
+            row = (mask[y, :] > 0).astype(np.uint8)
 
             
-            runs = [run for run in runs if run.size >= int(self.min_run_px)]
-    
-            if self.ignore_center_band and runs:
-                runs = [run for run in runs
-                        if not (run[0] >= cx0 and run[-1] <= cx1)]  
-
-            if not runs:
-                continue
+            diff = np.diff(np.pad(row, (1,1), 'constant'))
+            starts = np.where(diff == 1)[0]
+            ends   = np.where(diff == -1)[0] - 1
+            segs = []
+            for s,e in zip(starts, ends):
+                if e >= s:
+                    wseg = e - s + 1
+                    cx   = 0.5 * (s + e)
+                    segs.append((s, e, wseg, cx))
 
             
-            left_run  = runs[0]
-            right_run = runs[-1]
-            if left_run is right_run:
-                
-                mid = 0.5 * (left_run[0] + left_run[-1])
-                if mid < W * 0.5:
-                    
-                    center = mid + 0.5 * float(self.last_lane_w_px)
-                    width  = float(self.last_lane_w_px)
-                else:
-                 
-                    center = mid - 0.5 * float(self.last_lane_w_px)
-                    width  = float(self.last_lane_w_px)
-            else:
-                
-                left_edge  = left_run[-1]    
-                right_edge = right_run[0]     
-                width = right_edge - left_edge
-                if width < self.min_lane_w:
+            keep = []
+            for (s,e,wseg,cx) in segs:
+                if wseg < seg_min:
                     
                     continue
-                center = 0.5 * (left_edge + right_edge)
+                if center_forbid_lo <= cx <= center_forbid_hi:
+                  
+                    continue
+                keep.append((s,e,wseg,cx))
 
             
-            center = float(np.clip(center, 0, W-1))
-            centers.append(center)
-            used_y.append(y_scan)
-            if width is not None:
-                widths.append(float(width))
+            left  = None
+            right = None
+            if keep:
+                keep.sort(key=lambda t: t[3])  
+                left  = keep[0]
+                right = keep[-1]
+                if right[3] <= left[3] + 1.0:
+                    
+                    left = keep[0]; right = None
 
-        lane_w = float(np.median(widths)) if len(widths) > 0 else None
+            
+            if left is not None and right is not None:
+                xl = 0.5*(left[0] + left[1])
+                xr = 0.5*(right[0] + right[1])
+                if xr - xl >= max(self.min_lane_w, seg_min):
+                    c = 0.5*(xl + xr)
+                    w_est = xr - xl
+                    centers.append(c); used_y.append(y); lane_w = w_est
+            elif (left is not None or right is not None) and expect_w is not None:
+                
+                if left is not None:
+                    xl = 0.5*(left[0] + left[1])
+                    xr = xl + expect_w
+                else:
+                    xr = 0.5*(right[0] + right[1])
+                    xl = xr - expect_w
+                c = 0.5*(xl + xr)
+                centers.append(c); used_y.append(y); lane_w = expect_w
+
         return centers, used_y, lane_w
 
     def _hough_center(self, roi_bgr):
