@@ -41,13 +41,14 @@ class VisionLKA:
         self.target_speed  = rospy.get_param("~target_speed", 1.6)
         self.min_speed     = rospy.get_param("~min_speed", 0.6)
         self.reco_speed    = rospy.get_param("~recovery_speed", 0.6)
-        self.k_curve_speed = rospy.get_param("~k_curve_speed", 7.0)  # чем больше, тем сильней замедл.
+        self.k_curve_speed = rospy.get_param("~k_curve_speed", 7.0)
         self.steer_slowdown= rospy.get_param("~steer_slowdown", 0.18)
 
-        self.wheelbase   = rospy.get_param("~wheelbase", 1.2)     # м
-        self.a_acc_max   = rospy.get_param("~a_accel_max", 0.6)   # м/с^2
-        self.a_brake_max = rospy.get_param("~a_brake_max", 1.5)   # м/с^2
-        self.a_lat_max   = rospy.get_param("~a_lat_max", 1.8)     # м/с^2
+        # ЛИМИТЫ ДОЛЖНЫ БЫТЬ ЗАДАНЫ ЗДЕСЬ:
+        self.wheelbase     = rospy.get_param("~wheelbase", 1.2)   # м
+        self.a_accel_max   = rospy.get_param("~a_accel_max", 0.6) # м/с^2
+        self.a_brake_max   = rospy.get_param("~a_brake_max", 1.5) # м/с^2
+        self.a_lat_max     = rospy.get_param("~a_lat_max", 1.8)   # м/с^2
 
         # --- ROI и сканы ---
         self.roi_top     = rospy.get_param("~roi_top", 0.62)      # доля высоты от верха
