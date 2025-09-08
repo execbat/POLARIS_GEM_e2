@@ -136,11 +136,11 @@
 
       <!-- ROI и сканы -->
       <param name="roi_top"              value="0.60"/>
-      <rosparam param="scan_rows">[0.62, 0.72, 0.82, 0.92]</rosparam>
+      <rosparam param="scan_rows">[0.70,0.80,0.90,0.96]</rosparam>
       <param name="min_valid_rows"       value="2"/>
-      <param name="center_ignore_frac"   value="0.12"/> <!-- вырезаем центральную белую -->
-      <param name="lane_w_min_px"        value="90"/>
-      <param name="lane_w_max_px"        value="220"/>
+      <param name="center_ignore_frac"   value="0.18"/> <!-- вырезаем центральную белую -->
+      <param name="lane_w_min_px"        value="100"/>
+      <param name="lane_w_max_px"        value="340"/>
       <param name="lane_w_ema"           value="0.20"/>
       <param name="lane_center_alpha"    value="0.25"/>
       <param name="hold_bad_ms"          value="600"/>
@@ -150,10 +150,10 @@
       <param name="v_thresh"    value="35"/>   <!-- white: V low -->
       <param name="s_thresh"    value="110"/>  <!-- white: S high -->
       <param name="hls_L_min"   value="190"/>  <!-- white: L high -->
-      <param name="yellow_h_lo" value="15"/>
-      <param name="yellow_h_hi" value="40"/>
-      <param name="yellow_s_min" value="80"/>
-      <param name="yellow_v_min" value="80"/>
+      <param name="yellow_h_lo" value="10"/>
+      <param name="yellow_h_hi" value="60"/>
+      <param name="yellow_s_min" value="60"/>
+      <param name="yellow_v_min" value="60"/>
     </node>
    
     

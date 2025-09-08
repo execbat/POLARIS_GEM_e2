@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Simple, robust LKA for a scene with:
-- solid YELLOW lines on the left and right road borders,
-- dashed WHITE line in the center (ignored for control).
+LKA for roads with solid YELLOW borders (left/right) and a dashed WHITE center line.
 
 Pipeline:
-1) Crop ROI, build color masks: yellow (used), white (debug only).
-2) On several scan rows, find left/right YELLOW borders by contiguous runs.
-3) Lane center = mean(left, right). If only one side is visible, use last lane width.
-4) Smooth center and lane width with EMA. Estimate heading from center slope.
-5) PD(+heading) steering with rate limit and EMA. Speed profile with curve slowdown
-   and hard limits for lateral acceleration and dv/dt.
+1) ROI -> color masks: YELLOW (HSV OR LAB-b) + WHITE (debug). Optional fallback to WHITE edges if yellow is weak.
+2) On several scan rows, find left/right borders by contiguous runs (from edges toward the middle).
+3) Lane center = mean(left, right); if only one side is visible, use last lane width (EMA).
+4) Steering: PD + heading with rate limit and EMA smoothing.
+5) Speed: base target with curve/steer slowdown + limits for lateral acceleration and dv/dt.
 """
 
 import rospy, cv2, numpy as np, math
@@ -34,12 +31,12 @@ class VisionLKA:
         self.kp = rospy.get_param("~kp", 0.035)
         self.kd = rospy.get_param("~kd", 0.10)
         self.k_heading = rospy.get_param("~k_heading", 0.12)
-        self.der_alpha = rospy.get_param("~der_alpha", 0.7)  # EMA for derivative (0..1)
+        self.der_alpha = rospy.get_param("~der_alpha", 0.7)  # EMA for derivative
 
         # --- steering shaping ---
         self.steer_limit = rospy.get_param("~steer_limit", 0.90)
         self.steer_rate_limit = rospy.get_param("~steer_rate_limit", 2.0)  # rad/s
-        self.steer_alpha = rospy.get_param("~steer_alpha", 0.20)           # EMA (0..1)
+        self.steer_alpha = rospy.get_param("~steer_alpha", 0.20)           # EMA 0..1
         self.steer_sign = rospy.get_param("~steer_sign", -1.0)             # invert if needed
 
         # --- speed profile & limits ---
@@ -49,33 +46,40 @@ class VisionLKA:
         self.k_curve_speed = rospy.get_param("~k_curve_speed", 6.0)
         self.steer_slowdown = rospy.get_param("~steer_slowdown", 0.20)
 
-        self.wheelbase = rospy.get_param("~wheelbase", 1.2)     # m
-        self.a_accel_max = rospy.get_param("~a_accel_max", 0.35) # m/s^2
-        self.a_brake_max = rospy.get_param("~a_brake_max", 1.20) # m/s^2
-        self.a_lat_max = rospy.get_param("~a_lat_max", 1.80)     # m/s^2
+        self.wheelbase = rospy.get_param("~wheelbase", 1.2)       # m
+        self.a_accel_max = rospy.get_param("~a_accel_max", 0.35)   # m/s^2
+        self.a_brake_max = rospy.get_param("~a_brake_max", 1.20)   # m/s^2
+        self.a_lat_max = rospy.get_param("~a_lat_max", 1.80)       # m/s^2
 
-        # --- ROI & scan-rows ---
+        # --- ROI & scan rows ---
         self.roi_top = rospy.get_param("~roi_top", 0.60)  # fraction of image height
         self.scan_rows = rospy.get_param("~scan_rows", [0.70, 0.80, 0.90, 0.96])
         self.min_valid_rows = rospy.get_param("~min_valid_rows", 2)
         self.hold_bad_ms = rospy.get_param("~hold_bad_ms", 600)
         self.stop_if_lost = rospy.get_param("~stop_if_lost", False)
 
-        # --- lane width & center smoothing ---
+        # --- lane geometry smoothing ---
         self.lane_w_min_px = rospy.get_param("~lane_w_min_px", 100)
         self.lane_w_max_px = rospy.get_param("~lane_w_max_px", 340)
         self.lane_w_ema = rospy.get_param("~lane_w_ema", 0.20)
         self.lane_w_px_default_frac = rospy.get_param("~lane_w_px_default_frac", 0.28)
         self.center_alpha = rospy.get_param("~lane_center_alpha", 0.25)
-        self.edge_min_run_px = rospy.get_param("~edge_min_run_px", 14)  # min contiguous run to accept as border
+        self.edge_min_run_px = rospy.get_param("~edge_min_run_px", 16)  # min contiguous run to accept as border
+
+        # --- fallback control (white as edges if yellow is weak) ---
+        self.use_white_fallback = rospy.get_param("~use_white_fallback", True)
+        self.center_ignore_frac = rospy.get_param("~center_ignore_frac", 0.18)  # cut out the center band for white
+        self.min_yellow_px = rospy.get_param("~min_yellow_px", 400)  # pixels threshold to consider yellow reliable
 
         # --- color thresholds ---
         # yellow (HSV)
-        self.yellow_h_lo = rospy.get_param("~yellow_h_lo", 15)
-        self.yellow_h_hi = rospy.get_param("~yellow_h_hi", 40)
-        self.yellow_s_min = rospy.get_param("~yellow_s_min", 80)
-        self.yellow_v_min = rospy.get_param("~yellow_v_min", 80)
-        # white (debug only)
+        self.yellow_h_lo = rospy.get_param("~yellow_h_lo", 10)
+        self.yellow_h_hi = rospy.get_param("~yellow_h_hi", 60)
+        self.yellow_s_min = rospy.get_param("~yellow_s_min", 60)
+        self.yellow_v_min = rospy.get_param("~yellow_v_min", 60)
+        # yellow (LAB b-channel) — robust in shadows/sunlight
+        self.lab_b_min = rospy.get_param("~lab_b_min", 140)
+        # white (debug only, also used in fallback)
         self.s_thresh = rospy.get_param("~s_thresh", 110)
         self.v_thresh = rospy.get_param("~v_thresh", 35)
         self.hls_L_min = rospy.get_param("~hls_L_min", 190)
@@ -120,45 +124,59 @@ class VisionLKA:
         except Exception as e:
             rospy.logwarn_throttle(2.0, "cv_bridge: %s", e)
             return
+
         H_full, W_full = bgr.shape[:2]
 
-        # ROI
+        # ROI crop
         y0 = int(H_full * self.roi_top)
         y0 = min(max(y0, 0), H_full - 2)
         roi = bgr[y0:H_full, :]
         H, W = roi.shape[:2]
 
-        # default lane width on first frame
+        # default lane width on first frames
         if self.last_lane_w_px is None:
             self.last_lane_w_px = int(max(self.lane_w_min_px,
                                    min(self.lane_w_max_px, W * self.lane_w_px_default_frac)))
 
-        # masks
+        # color masks
         mask_yellow, mask_white = self._color_masks(roi)
 
-        # scan for borders
-        centers, used_y, lane_w = self._scan_centers(mask_yellow, W, H)
+        # optional fallback to white edges (center band removed)
+        edges = mask_yellow.copy()
+        yellow_px = int(cv2.countNonZero(mask_yellow))
+        if yellow_px < int(self.min_yellow_px) and self.use_white_fallback:
+            cx = W // 2
+            ignore = int(W * float(self.center_ignore_frac))
+            xL, xR = max(0, cx - ignore), min(W, cx + ignore)
+            fallback = mask_white.copy()
+            if xR > xL:
+                fallback[:, xL:xR] = 0
+            edges = cv2.bitwise_or(edges, fallback)
 
+        # scan rows
+        centers, used_y, lane_w = self._scan_centers(edges, W, H)
+
+        # not enough rows -> recovery
         if len(centers) < self.min_valid_rows:
-            self._recovery(mask_yellow | mask_white, W_full, H_full, y0, "NO LANE")
+            self._recovery(edges, W_full, H_full, y0, "NO LANE")
             return
 
         # lane width EMA
         if lane_w is not None:
-            a = float(self.lane_w_ema)
-            self.last_lane_w_px = (1.0 - a) * self.last_lane_w_px + a * float(lane_w)
+            a_w = float(self.lane_w_ema)
+            self.last_lane_w_px = (1.0 - a_w) * self.last_lane_w_px + a_w * float(lane_w)
 
-        # center EMA
+        # lane center EMA
         lane_center_px = float(np.median(centers[-max(2, len(centers)):]))
 
         if self.center_px_ema is None:
             self.center_px_ema = lane_center_px
         else:
-            a = float(self.center_alpha)
-            self.center_px_ema = (1.0 - a) * self.center_px_ema + a * lane_center_px
+            a_c = float(self.center_alpha)
+            self.center_px_ema = (1.0 - a_c) * self.center_px_ema + a_c * lane_center_px
         lane_center_px = self.center_px_ema
 
-        # lateral error (normalized) and heading (rad)
+        # lateral error (normalized wrt full image width) & heading
         img_center_px = 0.5 * W_full
         err = (lane_center_px - img_center_px) / (W_full * 0.5)
 
@@ -208,23 +226,28 @@ class VisionLKA:
         self.last_cmd.speed = float(speed)
         self.last_cmd.steering_angle = float(self.steer_filt)
 
-        # debug overlay
-        dbg = self._draw_debug(roi, mask_yellow, mask_white, centers, used_y, lane_center_px, W_full)
+        # debug image
+        dbg = self._draw_debug(roi, edges, mask_yellow, mask_white, centers, used_y, lane_center_px, W_full)
         self._publish_debug(dbg, W_full, H_full, y0)
 
     # -------------------- detectors --------------------
     def _color_masks(self, roi_bgr):
         hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
         hls = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HLS)
+        lab = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2LAB)
 
-        # yellow: used for borders
-        y_lo = (self.yellow_h_lo, self.yellow_s_min, self.yellow_v_min)
-        y_hi = (self.yellow_h_hi, 255, 255)
-        mask_yellow = cv2.inRange(hsv, y_lo, y_hi)
+        # robust yellow: HSV OR LAB(b)
+        y_hsv = cv2.inRange(
+            hsv,
+            (int(self.yellow_h_lo), int(self.yellow_s_min), int(self.yellow_v_min)),
+            (int(self.yellow_h_hi), 255, 255),
+        )
+        y_lab = cv2.inRange(lab[:, :, 2], int(self.lab_b_min), 255)
+        mask_yellow = cv2.bitwise_or(y_hsv, y_lab)
 
-        # white: debug only
-        white_hsv = cv2.inRange(hsv, (0, 0, self.v_thresh), (179, self.s_thresh, 255))
-        white_hls = cv2.inRange(hls[:, :, 1], self.hls_L_min, 255)
+        # white (debug + fallback)
+        white_hsv = cv2.inRange(hsv, (0, 0, int(self.v_thresh)), (179, int(self.s_thresh), 255))
+        white_hls = cv2.inRange(hls[:, :, 1], int(self.hls_L_min), 255)
         mask_white = cv2.bitwise_or(white_hsv, white_hls)
 
         # morphology
@@ -236,16 +259,13 @@ class VisionLKA:
 
         return mask_yellow, mask_white
 
-    def _scan_centers(self, mask_yellow, W, H):
+    def _scan_centers(self, mask_edges, W, H):
         centers, used_y = [], []
         lane_w = None
         min_run = int(self.edge_min_run_px)
 
         def pick_run_from_left(row):
-            run = 0
-            start = None
-            pick = None
-            # choose the last valid run before the middle (prefers border over interior blobs)
+            run, start, pick = 0, None, None
             mid = W // 2
             for x in range(0, mid):
                 if row[x] > 0:
@@ -261,9 +281,7 @@ class VisionLKA:
             return pick
 
         def pick_run_from_right(row):
-            run = 0
-            start = None
-            pick = None
+            run, start, pick = 0, None, None
             mid = W // 2
             for x in range(W - 1, mid - 1, -1):
                 if row[x] > 0:
@@ -281,7 +299,7 @@ class VisionLKA:
         for r in self.scan_rows:
             y = int(H * float(r))
             y = 0 if y < 0 else H - 1 if y >= H else y
-            row = mask_yellow[y, :]
+            row = mask_edges[y, :]
 
             left_idx = pick_run_from_left(row)
             right_idx = pick_run_from_right(row)
@@ -358,20 +376,19 @@ class VisionLKA:
         cv2.putText(dbg, label, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
         self._publish_debug(dbg, W_full, H_full, y0)
 
-    def _draw_debug(self, roi_bgr, mask_yellow, mask_white, centers, used_y, lane_center_px, W_full):
+    def _draw_debug(self, roi_bgr, edges, mask_yellow, mask_white, centers, used_y, lane_center_px, W_full):
         dbg = roi_bgr.copy()
+        edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        y_bgr = cv2.cvtColor(mask_yellow, cv2.COLOR_GRAY2BGR)
+        w_bgr = cv2.cvtColor(mask_white, cv2.COLOR_GRAY2BGR)
 
-        # overlays
-        yellow_bgr = cv2.cvtColor(mask_yellow, cv2.COLOR_GRAY2BGR)
-        white_bgr = cv2.cvtColor(mask_white, cv2.COLOR_GRAY2BGR)
-        mix = cv2.addWeighted(dbg, 0.7, yellow_bgr, 0.5, 0.0)
-        mix = cv2.addWeighted(mix, 1.0, white_bgr, 0.25, 0.0)
+        mix = cv2.addWeighted(dbg, 0.7, edges_bgr, 0.6, 0.0)
+        mix = cv2.addWeighted(mix, 1.0, y_bgr, 0.3, 0.0)
+        mix = cv2.addWeighted(mix, 1.0, w_bgr, 0.2, 0.0)
 
-        # scan points
         for y_scan, cx in zip(used_y, centers):
             cv2.circle(mix, (int(cx), int(y_scan)), 4, (0, 0, 255), -1)
 
-        # center indicators (global image center in blue, lane center in yellow)
         cv2.line(mix, (int(0.5 * W_full), mix.shape[0] - 5), (int(0.5 * W_full), mix.shape[0] - 55), (255, 0, 0), 2)
         cv2.line(mix, (int(lane_center_px), mix.shape[0] - 5), (int(lane_center_px), mix.shape[0] - 55), (0, 255, 255), 2)
 
@@ -384,7 +401,7 @@ class VisionLKA:
         try:
             canv[y0:H_full, :] = cv2.resize(roi_bgr, (W_full, H_full - y0))
         except Exception:
-            canv[y0:H_full, :] = roi_bgr  # best effort
+            canv[y0:H_full, :] = roi_bgr
         try:
             self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(canv, encoding='bgr8'))
         except Exception as e:
