@@ -245,7 +245,7 @@ class VisionLKA:
         y_norm = (np.array(used_y, dtype=np.float32) / max(1.0, ys))                # 0..1 
         c_norm = (np.array(centers, dtype=np.float32) - img_center_px) / (w * 0.5)  # -1..1
         if y_norm.ptp() < 1e-6:
-        slope_norm = 0.0
+            slope_norm = 0.0
         else:
             z = np.polyfit(y_norm, c_norm, 1)
             slope_norm = float(z[0])
