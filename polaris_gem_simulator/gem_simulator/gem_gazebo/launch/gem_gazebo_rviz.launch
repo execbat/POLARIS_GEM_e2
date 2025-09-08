@@ -102,55 +102,56 @@
 
 
 
+    <!-- Vision LKA (follow-left-line) -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
       <remap from="image" to="/gem/front_single_camera/image_raw"/>
       <remap from="cmd"           to="/vision_lka/cmd"/>
       <remap from="debug"         to="/vision_lka/debug"/>
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>
 
-      <!-- PD + heading -->
+      <!-- controller -->
       <param name="kp" value="0.035"/>
       <param name="kd" value="0.10"/>
       <param name="k_heading" value="0.12"/>
       <param name="der_alpha" value="0.7"/>
 
-      <!-- steering -->
+      <!-- steering shaping -->
       <param name="steer_limit" value="0.75"/>
       <param name="steer_rate_limit" value="1.4"/>
       <param name="steer_alpha" value="0.22"/>
-      <param name="steer_sign" value="-1.0"/> <!-- flip to 1.0 if turns the wrong way -->
+      <param name="steer_sign" value="-1.0"/>   <!-- auto flips if wrong -->
+      <param name="steer_bias" value="0.0"/>
 
-      <!-- speed -->
-      <param name="target_speed" value="0.8"/>
-      <param name="min_speed" value="0.35"/>
-      <param name="recovery_speed" value="0.5"/>
+      <!-- speed & limits -->
+      <param name="target_speed" value="0.6"/>
+      <param name="min_speed" value="0.25"/>
       <param name="k_curve_speed" value="6.0"/>
       <param name="steer_slowdown" value="0.20"/>
-
-      <!-- dynamics -->
+      <param name="recovery_speed" value="0.4"/>
       <param name="wheelbase" value="1.2"/>
       <param name="a_accel_max" value="0.35"/>
-      <param name="a_brake_max" value="1.20"/>
-      <param name="a_lat_max" value="1.80"/>
+      <param name="a_brake_max" value="1.2"/>
+      <param name="a_lat_max" value="1.8"/>
 
       <!-- ROI & scans -->
       <param name="roi_top" value="0.60"/>
       <param name="roi_top_boot" value="0.55"/>
-      <rosparam param="scan_rows">[0.74, 0.84, 0.92, 0.98]</rosparam>
+      <rosparam param="scan_rows">[0.74,0.84,0.92,0.98]</rosparam>
       <param name="min_valid_rows" value="2"/>
+      <param name="left_search_limit_frac" value="0.70"/>
       <param name="edge_min_run_px" value="16"/>
-      <param name="lane_center_alpha" value="0.25"/>
-      <param name="max_center_jump_frac" value="0.06"/>
       <param name="hold_bad_ms" value="600"/>
-      <param name="stop_if_lost" value="false"/>
 
-      <!-- SAFE offset between left border and image center -->
-      <param name="left_offset_px" value="-1"/>
+      <!-- target placement -->
+      <param name="left_offset_px" value="-1.0"/>        <!-- use fraction mode -->
       <param name="left_to_center_frac" value="0.60"/>
       <param name="center_margin_px" value="20"/>
       <param name="min_offset_margin_px" value="20"/>
+      <param name="max_center_jump_frac" value="0.06"/>
+      <param name="lane_center_alpha" value="0.25"/>
+      <param name="cam_center_shift_px" value="0.0"/>    <!-- tune if camera not centered -->
 
-      <!-- robust bootstrap -->
+      <!-- bootstrap -->
       <param name="bootstrap_enable" value="true"/>
       <param name="bootstrap_frames_confirm" value="8"/>
       <param name="bootstrap_speed_scale" value="0.75"/>
@@ -158,7 +159,7 @@
       <param name="center_ignore_frac" value="0.25"/>
       <param name="yellow_good_px_threshold" value="300"/>
 
-      <!-- color thresholds -->
+      <!-- color -->
       <param name="yellow_h_lo" value="8"/>
       <param name="yellow_h_hi" value="70"/>
       <param name="yellow_s_min" value="50"/>
@@ -167,8 +168,12 @@
       <param name="s_thresh" value="110"/>
       <param name="v_thresh" value="35"/>
       <param name="hls_L_min" value="190"/>
-    </node>
 
+      <!-- calibration -->
+      <param name="auto_sign_calib" value="true"/>
+      <param name="calib_window" value="20"/>
+      <param name="calib_slope_thr" value="0.02"/>
+    </node>
 
    
     
