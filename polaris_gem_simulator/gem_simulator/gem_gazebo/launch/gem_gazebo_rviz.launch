@@ -133,16 +133,19 @@
       <param name="recovery_speed" value="0.4"/>
 
       <!-- ROI & scans -->
-      <param name="roi_y_top" value="0.62"/>                 <!-- синоним roi_top -->
+      <param name="roi_top"           value="0.52"/> 
+      <param name="roi_top_recovery"  value="0.55"/>               
       <rosparam param="scan_rows">[0.55,0.65,0.75,0.85,0.95]</rosparam>
       <param name="min_valid_rows"     value="1"/>
       <param name="min_lane_width_px"  value="10"/>
-      <param name="min_mask_area"      value="150"/>
+      <param name="min_mask_px"      value="150"/>
       <param name="hold_bad_ms"        value="600"/>
 
       <!-- color/edge -->
-      <param name="white_v_min" value="120"/>
-      <param name="white_s_max" value="120"/>
+      <param name="v_thresh"  value="180"/>
+      <param name="s_thresh"  value="60"/> 
+      <param name="hls_L_min" value="200"/>
+      <param name="lab_b_min" value="140"/>
       
       <param name="use_yellow_hsv" value="true"/>
       <param name="yellow_h_lo" value="15"/>
@@ -150,8 +153,8 @@
       <param name="yellow_s_min" value="60"/>
       <param name="yellow_v_min" value="60"/>
 
-      <param name="canny_low"  value="60"/>
-      <param name="canny_high" value="150"/>
+      <param name="canny1"  value="60"/>
+      <param name="canny2" value="150"/>
       <param name="hough_threshold"   value="25"/>
       <param name="hough_min_length"  value="60"/>
       <param name="hough_max_gap"     value="20"/>
