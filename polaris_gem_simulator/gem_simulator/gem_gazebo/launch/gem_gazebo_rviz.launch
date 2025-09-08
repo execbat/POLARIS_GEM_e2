@@ -120,17 +120,25 @@
       <param name="i_decay"    value="0.02"/>
 
       <!-- steering limits -->
-      <param name="steer_limit"        value="0.90"/>
-      <param name="steer_rate_limit"   value="2.0"/>
-      <param name="steer_alpha"        value="0.3"/>   
+      <param name="steer_limit"        value="0.75"/>
+      <param name="steer_rate_limit"   value="1.6"/>
+      <param name="steer_alpha"        value="0.25"/>   
       <param name="steer_sign"         value="-1.0"/>   <!-- -1 if steering is inverted-->
 
       <!-- speed profile -->
-      <param name="target_speed"   value="1.2"/>
+      <param name="target_speed"   value="1.6"/>
       <param name="min_speed"      value="0.6"/>
       <param name="k_curve_speed"  value="8.0"/>
       <param name="steer_slowdown" value="0.15"/>
       <param name="recovery_speed" value="0.4"/>
+      
+      <!-- dynamics / safety -->
+      <param name="wheelbase"     value="1.2"/>
+      <param name="a_accel_max"   value="0.6"/>   
+      <param name="a_brake_max"   value="1.5"/>   
+      <param name="a_lat_max"     value="1.8"/>  
+      <param name="err_slow_k"    value="0.6"/>
+      <param name="err_slow_th"   value="0.25"/>
 
       <!-- ROI & scans -->
       <param name="roi_top"           value="0.52"/> 
