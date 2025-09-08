@@ -34,7 +34,7 @@ We also recommend **Desktop-Full Install** as suggested in the instructions.
 
 After installing ROS Noetic and Gazebo 11 on Ubuntu 20.04, we recommend installing ROS packages using APT as follows:
 ```bash
-$ sudo apt install ros-noetic-ackermann-msgs ros-noetic-geometry2 \
+sudo apt install ros-noetic-ackermann-msgs ros-noetic-geometry2 \
     ros-noetic-hector-gazebo ros-noetic-hector-models ros-noetic-jsk-rviz-plugins \
     ros-noetic-ros-control ros-noetic-ros-controllers ros-noetic-velodyne-simulator
 ```
@@ -47,17 +47,17 @@ This is the fastest path for reviewers.
 
 1) Pull the image:
 ```bash
-$ docker pull execbat/ros_vehicle_final:latest
+docker pull execbat/ros_vehicle_final:latest
 ```
 
 2) Allow X11 for GUI apps:
 ```bash
-$ xhost +local:root
+xhost +local:root
 ```
 
 3) Run the container:
 ```bash
-$ sudo docker run -it --rm --net=host \
+sudo docker run -it --rm --net=host \
   -e DISPLAY=$DISPLAY \
   -e QT_X11_NO_MITSHM=1 \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
@@ -68,10 +68,10 @@ $ sudo docker run -it --rm --net=host \
 
 4) Inside the container, build and launch:
 ```bash
-$ source /opt/ros/noetic/setup.bash
-$ catkin_make
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
+source /opt/ros/noetic/setup.bash
+catkin_make
+source devel/setup.bash
+roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
 ```
 
 > **NVIDIA GPUs**: install `nvidia-container-toolkit` and append `--gpus all` to the `docker run` command.  
@@ -85,9 +85,9 @@ Use this if you prefer to build the workspace yourself inside a clean ROS image.
 
 1) Start a clean ROS desktop container:
 ```bash
-$ docker pull ros:noetic-desktop-full
-$ xhost +local:root
-$ sudo docker run -it --rm --net=host \
+docker pull ros:noetic-desktop-full
+xhost +local:root
+sudo docker run -it --rm --net=host \
   -e DISPLAY=$DISPLAY \
   -e QT_X11_NO_MITSHM=1 \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
@@ -99,25 +99,25 @@ $ sudo docker run -it --rm --net=host \
 2) Inside the container, prepare tools and workspace:
 ```bash
 # tools
-$ apt-get update && apt-get install -y git python3-rosdep build-essential
-$ rosdep init || true
-$ rosdep update
+apt-get update && apt-get install -y git python3-rosdep build-essential
+rosdep init || true
+rosdep update
 
 # workspace
-$ mkdir -p /ws/src && cd /ws/src
-$ git clone https://github.com/execbat/POLARIS_GEM_e2.git .
-$ cd /ws
+mkdir -p /ws/src && cd /ws/src
+git clone https://github.com/execbat/POLARIS_GEM_e2.git .
+cd /ws
 
 # dependencies
-$ rosdep install --from-paths src --ignore-src -r -y
+rosdep install --from-paths src --ignore-src -r -y
 ```
 
 3) Build and run:
 ```bash
-$ source /opt/ros/noetic/setup.bash
-$ catkin_make
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
+source /opt/ros/noetic/setup.bash
+catkin_make
+source devel/setup.bash
+roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
 ```
 
 ---
@@ -126,16 +126,16 @@ $ roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
 
 We assume the Catkin workspace is under `~/gem_ws`. Clone this repository to `~/gem_ws/src`:
 ```bash
-$ mkdir -p ~/gem_ws/src
-$ cd ~/gem_ws/src
-$ git clone https://github.com/execbat/POLARIS_GEM_e2.git
+mkdir -p ~/gem_ws/src
+cd ~/gem_ws/src
+git clone https://github.com/execbat/POLARIS_GEM_e2.git
 ```
 
 Compile the whole workspace with `catkin_make`:
 ```bash
-$ source /opt/ros/noetic/setup.bash
-$ cd ~/gem_ws
-$ catkin_make
+source /opt/ros/noetic/setup.bash
+cd ~/gem_ws
+catkin_make
 ```
 
 For more on Catkin workspaces, see: <http://wiki.ros.org/catkin/Tutorials/create_a_workspace>.
@@ -146,8 +146,8 @@ For more on Catkin workspaces, see: <http://wiki.ros.org/catkin/Tutorials/create
 
 ### Simple Track Environment
 ```bash
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
+source devel/setup.bash
+roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
 ```
 
 <a href="url"><img src="./images/simple_track_rviz.png" width="600"></a>
@@ -155,21 +155,21 @@ $ roslaunch gem_gazebo gem_gazebo_rviz.launch velodyne_points:=true
 
 ### Geometric based Lateral Controller
 ```bash
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_gazebo_rviz.launch
+source devel/setup.bash
+roslaunch gem_gazebo gem_gazebo_rviz.launch
 
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_sensor_info.launch
+source devel/setup.bash
+roslaunch gem_gazebo gem_sensor_info.launch
 
-$ source devel/setup.bash
-$ rosrun gem_pure_pursuit_sim pure_pursuit_sim.py
+source devel/setup.bash
+rosrun gem_pure_pursuit_sim pure_pursuit_sim.py
 ```
 
 <a href="url"><img src="./images/pp_controller.gif" width="600"></a>
 
 ```bash
-$ source devel/setup.bash
-$ rosrun gem_stanley_sim stanley_sim.py
+source devel/setup.bash
+rosrun gem_stanley_sim stanley_sim.py
 ```
 
 <a href="url"><img src="./images/stanley_controller_rviz.gif" width="600"></a>
@@ -177,11 +177,11 @@ $ rosrun gem_stanley_sim stanley_sim.py
 
 ### Highbay Environment
 ```bash
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_gazebo_rviz.launch world_name:="highbay_track.world" x:=-5.5 y:=-21 velodyne_points:="true"
+source devel/setup.bash
+roslaunch gem_gazebo gem_gazebo_rviz.launch world_name:="highbay_track.world" x:=-5.5 y:=-21 velodyne_points:="true"
 
-$ source devel/setup.bash
-$ roslaunch gem_gazebo gem_sensor_info.launch
+source devel/setup.bash
+roslaunch gem_gazebo gem_sensor_info.launch
 ```
 
 <a href="url"><img src="./images/highbay_rviz.png" width="600"></a>
@@ -222,9 +222,9 @@ A prototype node `vision_lka.py` tracks the **left yellow boundary** using HSVâˆ
 
 **Run the LKA node (inside the container):**
 ```bash
-$ source /opt/ros/noetic/setup.bash
-$ source /ws/devel/setup.bash
-$ rosrun gem_lane_keeping vision_lka.py _steer_sign:=-1.0 \
+source /opt/ros/noetic/setup.bash
+source /ws/devel/setup.bash
+rosrun gem_lane_keeping vision_lka.py _steer_sign:=-1.0 \
   image:=/gem/front_single_camera/image_raw \
   cmd:=/gem/ackermann_cmd
 ```
@@ -232,11 +232,11 @@ $ rosrun gem_lane_keeping vision_lka.py _steer_sign:=-1.0 \
 **Quick tuning at runtime:**
 ```bash
 # if steering is reversed:
-$ rosparam set /vision_lka/steer_sign 1.0
+rosparam set /vision_lka/steer_sign 1.0
 
 # stronger response to lateral error / heading:
-$ rosparam set /vision_lka/kp 0.10
-$ rosparam set /vision_lka/k_heading 0.30
+rosparam set /vision_lka/kp 0.10
+rosparam set /vision_lka/k_heading 0.30
 ```
 
 **Topics:**
