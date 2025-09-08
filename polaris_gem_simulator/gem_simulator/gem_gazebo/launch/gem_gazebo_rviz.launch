@@ -130,24 +130,25 @@
       <param name="min_speed"      value="0.6"/>
       <param name="k_curve_speed"  value="8.0"/>
       <param name="steer_slowdown" value="0.15"/>
+      <param name="recovery_speed" value="0.4"/>
 
       <!-- ROI & scans -->
       <param name="roi_y_top" value="0.62"/>                 <!-- синоним roi_top -->
-      <rosparam param="scan_rows">[0.60,0.70,0.80,0.90]</rosparam>
-      <param name="min_valid_rows"     value="2"/>
-      <param name="min_lane_width_px"  value="22"/>
+      <rosparam param="scan_rows">[0.55,0.65,0.75,0.85,0.95]</rosparam>
+      <param name="min_valid_rows"     value="1"/>
+      <param name="min_lane_width_px"  value="10"/>
       <param name="min_mask_area"      value="150"/>
       <param name="hold_bad_ms"        value="600"/>
 
       <!-- color/edge -->
-      <param name="white_v_min" value="180"/>
-      <param name="white_s_max" value="60"/>
+      <param name="white_v_min" value="120"/>
+      <param name="white_s_max" value="120"/>
       
-      <param name="use_yellow_hsv" value="false"/>
+      <param name="use_yellow_hsv" value="true"/>
       <param name="yellow_h_lo" value="15"/>
-      <param name="yellow_h_hi" value="40"/>
-      <param name="yellow_s_min" value="80"/>
-      <param name="yellow_v_min" value="80"/>
+      <param name="yellow_h_hi" value="45"/>
+      <param name="yellow_s_min" value="60"/>
+      <param name="yellow_v_min" value="60"/>
 
       <param name="canny_low"  value="60"/>
       <param name="canny_high" value="150"/>
