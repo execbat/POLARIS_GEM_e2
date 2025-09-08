@@ -162,6 +162,11 @@
 
       <!-- debug -->
       <param name="debug_overlay" value="true"/>
+      
+      <param name="ignore_center_band" value="true"/>
+      <param name="center_band_frac"   value="0.20"/>  
+      <param name="min_run_px"         value="12"/>    
+      <param name="prefer_edges"       value="true"/>
     </node>
    
     

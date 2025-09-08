@@ -62,6 +62,12 @@ class VisionLKA:
         self.min_valid_rows = rospy.get_param("~min_valid_rows", 2)
         self.hold_bad_ms  = rospy.get_param("~hold_bad_ms", 600)
         self.stop_if_lost = rospy.get_param("~stop_if_lost", False)
+        
+        # ======== LANE GEOMETRY FILTERS (center-line ignore) ========
+        self.ignore_center_band = rospy.get_param("~ignore_center_band", True)  
+        self.center_band_frac   = rospy.get_param("~center_band_frac", 0.20)    
+        self.min_run_px         = rospy.get_param("~min_run_px", 12)            
+        self.prefer_edges       = rospy.get_param("~prefer_edges", True)       
 
         # ======== HOUGH/CANNY (fallback) ========
         self.canny1 = rospy.get_param("~canny1", rospy.get_param("~canny_low", 60))
@@ -122,6 +128,12 @@ class VisionLKA:
 
         # Primary color mask
         mask_color = self._color_mask(roi)
+        if self.ignore_center_band:
+            cx0 = int((0.5 - 0.5*self.center_band_frac) * w)
+            cx1 = int((0.5 + 0.5*self.center_band_frac) * w)
+            cx0 = max(0, min(w-1, cx0));  cx1 = max(0, min(w, cx1))
+            mask_color[:, cx0:cx1] = 0
+        
         centers, used_y, lane_w_px = self._scan_centers(mask_color)
 
         # Fallback (Canny+Hough)
@@ -218,6 +230,11 @@ class VisionLKA:
         self.last_cmd.speed = float(speed)
         self.last_cmd.steering_angle = float(self.steer_filt)
         self.prev_t = t
+        
+        if self.ignore_center_band:
+            cv2.rectangle(dbg,
+                          (cx0, 0), (cx1, dbg.shape[0]-1),
+                          (0, 128, 255), 1)
 
         # 8) Debug overlay
         dbg = cv2.cvtColor(mask_color, cv2.COLOR_GRAY2BGR)
@@ -255,20 +272,69 @@ class VisionLKA:
         return mask
 
     def _scan_centers(self, mask):
-        ys = mask.shape[0]
-        centers, used_y = [], []
-        lane_w = None
+
+        H, W = mask.shape[:2]
+        centers, used_y, widths = [], [], []
+
+        
+        cx0 = int((0.5 - 0.5*self.center_band_frac) * W)
+        cx1 = int((0.5 + 0.5*self.center_band_frac) * W)
+
         for r in self.scan_rows:
-            y_scan = int(ys * float(r))
-            y_scan = 0 if y_scan < 0 else ys-1 if y_scan >= ys else y_scan
+            y_scan = int(H * float(r))
+            y_scan = 0 if y_scan < 0 else H-1 if y_scan >= H else y_scan
             row = mask[y_scan, :]
-            xs = np.where(row > 0)[0]
-            if xs.size >= self.min_lane_w:
-                left_idx, right_idx = int(xs[0]), int(xs[-1])
-                if (right_idx - left_idx) >= self.min_lane_w:
-                    centers.append(0.5*(left_idx + right_idx))
-                    used_y.append(y_scan)
-                    lane_w = (right_idx - left_idx)
+
+            xs = np.flatnonzero(row > 0)
+            if xs.size == 0:
+                continue
+    
+            
+            split_idx = np.where(np.diff(xs) > 1)[0] + 1
+            runs = np.split(xs, split_idx)
+
+            
+            runs = [run for run in runs if run.size >= int(self.min_run_px)]
+    
+            if self.ignore_center_band and runs:
+                runs = [run for run in runs
+                        if not (run[0] >= cx0 and run[-1] <= cx1)]  
+
+            if not runs:
+                continue
+
+            
+            left_run  = runs[0]
+            right_run = runs[-1]
+            if left_run is right_run:
+                
+                mid = 0.5 * (left_run[0] + left_run[-1])
+                if mid < W * 0.5:
+                    
+                    center = mid + 0.5 * float(self.last_lane_w_px)
+                    width  = float(self.last_lane_w_px)
+                else:
+                 виден правый край
+                    center = mid - 0.5 * float(self.last_lane_w_px)
+                    width  = float(self.last_lane_w_px)
+            else:
+                
+                left_edge  = left_run[-1]    
+                right_edge = right_run[0]     
+                width = right_edge - left_edge
+                if width < self.min_lane_w:
+                    
+                    continue
+                center = 0.5 * (left_edge + right_edge)
+
+            
+            center = float(np.clip(center, 0, W-1))
+            centers.append(center)
+            used_y.append(y_scan)
+            if width is not None:
+                widths.append(float(width))
+
+        lane_w = float(np.median(widths)) if len(widths) > 0 else None
         return centers, used_y, lane_w
 
     def _hough_center(self, roi_bgr):
