@@ -314,7 +314,7 @@ class VisionLKA:
                     center = mid + 0.5 * float(self.last_lane_w_px)
                     width  = float(self.last_lane_w_px)
                 else:
-                 виден правый край
+                 
                     center = mid - 0.5 * float(self.last_lane_w_px)
                     width  = float(self.last_lane_w_px)
             else:
