@@ -102,7 +102,7 @@
 
 
 
-    <!-- Follow-left-line LKA -->
+    <!-- Follow-left-line with robust bootstrap -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
       <remap from="image" to="/gem/front_single_camera/image_raw"/>
       <remap from="cmd"           to="/vision_lka/cmd"/>
@@ -128,7 +128,7 @@
       <param name="k_curve_speed" value="6.0"/>
       <param name="steer_slowdown" value="0.20"/>
 
-      <!-- dynamics limits -->
+      <!-- dynamics -->
       <param name="wheelbase" value="1.2"/>
       <param name="a_accel_max" value="0.35"/>
       <param name="a_brake_max" value="1.20"/>
@@ -136,7 +136,8 @@
 
       <!-- ROI & scans -->
       <param name="roi_top" value="0.60"/>
-      <rosparam param="scan_rows">[0.72, 0.82, 0.90, 0.96]</rosparam>
+      <param name="roi_top_boot" value="0.55"/>
+      <rosparam param="scan_rows">[0.74, 0.84, 0.92, 0.98]</rosparam>
       <param name="min_valid_rows" value="2"/>
       <param name="edge_min_run_px" value="16"/>
       <param name="lane_center_alpha" value="0.25"/>
@@ -144,22 +145,29 @@
       <param name="hold_bad_ms" value="600"/>
       <param name="stop_if_lost" value="false"/>
 
-      <!-- desired offset from the LEFT yellow line -->
-      <!-- If you roughly know lane width in pixels, set left_offset_px to ~0.5 * lane_width_px
-       and remove/ignore left_offset_frac. Otherwise start with 0.38 of ROI width: -->
+      <!-- desired offset to the right of the left line -->
       <param name="left_offset_px" value="-1"/>
       <param name="left_offset_frac" value="0.38"/>
 
-      <!-- visibility-speed scaling -->
-      <param name="one_side_speed_scale" value="0.85"/>
+      <!-- bootstrap (white in left-side band) -->
+      <param name="bootstrap_enable" value="true"/>
+      <param name="bootstrap_frames_confirm" value="8"/>
+      <param name="bootstrap_speed_scale" value="0.75"/>
+      <param name="left_band_frac" value="0.35"/>
+      <param name="center_ignore_frac" value="0.20"/>
+      <param name="yellow_good_px_threshold" value="300"/>
 
-      <!-- robust yellow thresholds -->
-      <param name="yellow_h_lo" value="10"/>
-      <param name="yellow_h_hi" value="60"/>
-      <param name="yellow_s_min" value="60"/>
-      <param name="yellow_v_min" value="60"/>
-      <param name="lab_b_min" value="140"/>
+      <!-- color thresholds -->
+      <param name="yellow_h_lo" value="8"/>
+      <param name="yellow_h_hi" value="70"/>
+      <param name="yellow_s_min" value="50"/>
+      <param name="yellow_v_min" value="50"/>
+      <param name="lab_b_min" value="130"/>
+      <param name="s_thresh" value="110"/>
+      <param name="v_thresh" value="35"/>
+      <param name="hls_L_min" value="190"/>
     </node>
+
 
    
     
