@@ -231,10 +231,7 @@ class VisionLKA:
         self.last_cmd.steering_angle = float(self.steer_filt)
         self.prev_t = t
         
-        if self.ignore_center_band:
-            cv2.rectangle(dbg,
-                          (cx0, 0), (cx1, dbg.shape[0]-1),
-                          (0, 128, 255), 1)
+
 
         # 8) Debug overlay
         dbg = cv2.cvtColor(mask_color, cv2.COLOR_GRAY2BGR)
@@ -242,6 +239,12 @@ class VisionLKA:
             cv2.line(dbg, (int(cx), y_scan), (int(cx), max(0, y_scan-30)), (0, 0, 255), 2)
         if used_fallback and lines_draw is not None:
             dbg = cv2.addWeighted(dbg, 1.0, lines_draw, 0.8, 0.0)
+            
+        if self.ignore_center_band:
+            cv2.rectangle(dbg,
+                          (cx0, 0), (cx1, dbg.shape[0]-1),
+                          (0, 128, 255), 1)
+            
         cv2.line(dbg, (int(img_center_px), ys-5), (int(img_center_px), ys-55), (255, 0, 0), 1)
         txt = f"err={err:+.2f} de={de_f:+.2f} I={self.int_err:+.2f} hd={heading:+.2f} δ={self.steer_filt:+.2f} v={speed:.2f}"
         cv2.putText(dbg, txt, (10, dbg.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255),1, cv2.LINE_AA)
