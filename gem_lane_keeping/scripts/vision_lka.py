@@ -158,65 +158,49 @@ class VisionLKA:
 
 
     def on_image(self, msg: Image):
-    
+        # 0) Получаем BGR и ROI
         try:
             bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as e:
             rospy.logwarn_throttle(2.0, "cv_bridge: %s", e)
             return
-
         h, w = bgr.shape[:2]
+
         recovering = (rospy.Time.now() - self.last_ok_time).to_sec()*1000.0 >= self.hold_bad_ms
         roi_top_eff = self.roi_top_reco if recovering else self.roi_top
         y0 = int(h * roi_top_eff); y0 = min(max(y0, 0), h-2)
         roi = bgr[y0:h, :]
 
-   
+        # 1) Цветовая маска
         mask_color = self._color_mask(roi)
-        H_roi, W_roi = mask_color.shape[:2]
-    
 
-        forbid_band = (None, None)
-        if self.center_band_mode != "off":
-          
-            if self.center_filt is not None:
-                cx_est = float(self.center_filt)
-            elif self.last_center_px is not None:
-                cx_est = float(self.last_center_px)
-            else:
-                cx_est = 0.5 * W_roi
+        # 1.1) Игнорируем центральную область по ширине кадра (чтобы не ловить прерывистую белую)
+        Hm, Wm = mask_color.shape[:2]
+        cx_img = 0.5 * Wm
+        center_ignore_frac = float(rospy.get_param("~center_ignore_frac", 0.10))  # 10% по умолчанию
+        ignore = int(Wm * center_ignore_frac)
+        xL_blk, xR_blk = int(cx_img - ignore), int(cx_img + ignore)
+        xL_blk = max(0, xL_blk); xR_blk = min(Wm, xR_blk)
+        mask_nocenter = mask_color.copy()
+        if xR_blk > xL_blk:
+            mask_nocenter[:, xL_blk:xR_blk] = 0
 
-            if self.center_band_mode == "static":
-                half = 0.5 * float(self.center_band_frac) * W_roi
-            else:
-                base_w = self.last_lane_w_px if self.last_lane_w_px is not None else (0.4 * W_roi)
-                half = 0.5 * max(float(self.center_band_min_px), float(self.center_band_k) * float(base_w))
-    
-            cx0 = int(max(0, min(W_roi-1, cx_est - half)))
-            cx1 = int(max(0, min(W_roi,   cx_est + half)))
-            if cx1 > cx0:
-                mask_color[:, cx0:cx1] = 0
-                forbid_band = (cx0, cx1)
+        # 2) Сканы центра полосы по модифицированной маске
+        centers, used_y, lane_w_px = self._scan_centers(mask_nocenter)
 
- 
-        try:
-            centers, used_y, lane_w_px = self._scan_centers(mask_color, forbid_band)
-        except TypeError:
-        
-            centers, used_y, lane_w_px = self._scan_centers(mask_color)
-
-     
-        used_fallback, lines_draw = False, None
+        # 3) Фолбэк (Canny+Hough) если центра нет
+        used_fallback = False
+        lines_draw = None
         if len(centers) < self.min_valid_rows:
             center_h, lane_w_h, lines_draw = self._hough_center(roi)
             if center_h is not None:
                 ys = mask_color.shape[0]
-                centers = [center_h] * max(2, self.min_valid_rows)
+                centers = [center_h]*max(2, self.min_valid_rows)
                 used_y  = [int(ys*0.85), int(ys*0.95)]
                 lane_w_px = lane_w_h
                 used_fallback = True
 
- 
+        # 4) Если по-прежнему ничего — recovery и отрисовка
         if len(centers) < self.min_valid_rows:
             self._recovery_publish(mask_color, w, h, y0, "NO LANE")
             self.lost_frames += 1
@@ -224,132 +208,113 @@ class VisionLKA:
         else:
             self.lost_frames = 0
 
-     
+        # 5) Центр полосы + сглаживание
         img_center_px  = 0.5 * w
         lane_center_px = float(np.mean(centers[-max(1, len(centers)//2):]))
+
         if lane_w_px is not None and lane_w_px > 5:
-            self.last_lane_w_px = 0.8 * self.last_lane_w_px + 0.2 * float(lane_w_px)
+            self.last_lane_w_px = 0.8*self.last_lane_w_px + 0.2*float(lane_w_px)
 
-     
-        if self.center_filt is None:
-            self.center_filt = lane_center_px
+        alpha_center = float(rospy.get_param("~lane_center_alpha", 0.25))  # EMA для центра
+        if self.last_center_px is None:
+            self.last_center_px = lane_center_px
         else:
-            b = float(self.center_beta)  # доля нового
-            self.center_filt = (1.0 - b) * self.center_filt + b * lane_center_px
+            self.last_center_px = (1.0 - alpha_center)*self.last_center_px + alpha_center*lane_center_px
+        lane_center_px = self.last_center_px
 
-      
-        err = (self.center_filt - img_center_px) / (w * 0.5)
-    
-       
+        # 6) Ошибки: поперечная (норм.) и heading (рад)
+        err = (lane_center_px - img_center_px) / (w * 0.5)
+
         ys = mask_color.shape[0]
-        y_norm = (np.array(used_y, dtype=np.float32) / max(1.0, ys))                # 0..1 
-        c_norm = (np.array(centers, dtype=np.float32) - img_center_px) / (w * 0.5)  # -1..1
-        if y_norm.ptp() < 1e-6:
-            slope_norm = 0.0
-        else:
+        y_norm = (np.array(used_y, dtype=np.float32) / max(1.0, ys))
+        c_norm = (np.array(centers, dtype=np.float32) - (0.5*w)) / (w * 0.5)
+        if len(used_y) >= 2 and y_norm.ptp() >= 1e-6:
             z = np.polyfit(y_norm, c_norm, 1)
             slope_norm = float(z[0])
-        heading_raw = math.atan(slope_norm)
-        a = float(self.heading_beta)
-        self.heading_filt = (1.0 - a) * self.heading_filt + a * heading_raw
-        heading = self.heading_filt
+        else:
+            slope_norm = 0.0
+        heading = math.atan(slope_norm)
 
-      
+        # 7) PID как в симуляторе + ограничение скорости поворота руля
         t  = rospy.get_time()
         dt = max(1e-3, t - self.prev_t)
-
-        de   = (err - self.prev_err) / dt
+        de = (err - self.prev_err) / dt
         de_f = self.der_alpha * self.prev_de_f + (1.0 - self.der_alpha) * de
 
         delta_fb = -(self.kp*err + self.ki*self.int_err + self.kd*de_f + self.k_heading*heading)
-        raw = delta_fb  
+        raw = delta_fb
 
-      
         max_step = self.steer_rate_limit * dt
         raw = clamp(raw, self.prev_delta - max_step, self.prev_delta + max_step)
 
-       
         delta = clamp(raw, -self.steer_limit, self.steer_limit)
 
-      
+        # анти-windup: интегрируем только вне насыщения
         if abs(delta) < self.steer_limit - 1e-6:
             self.int_err = (1.0 - self.i_leak) * self.int_err + err * dt
             self.int_err = clamp(self.int_err, -0.8, 0.8)
 
-      
         self.prev_err   = err
         self.prev_de_f  = de_f
         self.prev_delta = delta
         self.prev_t     = t
 
-     
+        # 8) Сглаживание руля
         alpha = float(self.steer_alpha)
         new_delta = delta * self.steer_sign
         if alpha <= 0.0 or alpha >= 1.0:
-            steer_cmd = new_delta
+            self.steer_filt = new_delta
         else:
             self.steer_filt = (1.0 - alpha) * self.steer_filt + alpha * new_delta
-            steer_cmd = self.steer_filt
-        self.steer_filt = steer_cmd
 
-   
+        # 9) Профиль скорости + жёсткие ограничения по ускорениям
+        # базовый профиль (кривая/руль)
         v_curve = 1.0 / (1.0 + self.k_curve_speed * abs(heading))
         v_steer = 1.0 - self.steer_slowdown * abs(self.steer_filt)
         v_scale = max(0.25, min(v_curve, v_steer))
+        v_des   = clamp(self.target_speed * v_scale, self.min_speed, self.target_speed)
 
-        
-        if abs(err) > self.err_slow_th:
-            v_scale *= max(0.35, 1.0 - self.err_slow_k * (abs(err) - self.err_slow_th))
+        # ограничения по a_lat и dv/dt (внутри on_image, чтобы не зависеть от доп. функций)
+        a_acc = float(rospy.get_param("~a_accel_max", 0.4))
+        a_brk = float(rospy.get_param("~a_brake_max", 1.2))
+        a_lat_max = float(rospy.get_param("~a_lat_max", 1.2))
+        Lwb = float(rospy.get_param("~wheelbase", 1.2))
+        # по поперечному: a_lat ≈ v^2/L * |tan(δ)|
+        tan_d = abs(math.tan(self.steer_filt))
+        if tan_d > 1e-4:
+            v_lat_max = math.sqrt(max(0.0, a_lat_max * Lwb / tan_d))
+            v_des = min(v_des, v_lat_max)
+        # по продольному: dv/dt
+        v_prev = float(getattr(self.last_cmd, "speed", 0.0))
+        dv     = v_des - v_prev
+        dv_max = (a_acc * dt) if dv >= 0.0 else (a_brk * dt)
+        speed  = v_prev + clamp(dv, -abs(dv_max), abs(dv_max))
 
-        
-        L = max(0.2, float(self.wheelbase))
-        kappa = abs(math.tan(self.steer_filt) / L)
-        if kappa > 1e-4:
-            v_lat_cap = math.sqrt(max(1e-6, self.a_lat_max / kappa))
-        else:
-            v_lat_cap = self.target_speed
-
-        # desired spd
-        v_des = min(self.target_speed * v_scale, v_lat_cap)
-        v_des = clamp(v_des, self.min_speed, self.target_speed)
-
-        # smooth ramp
-        speed, dt_pub = self._ramped_speed(v_des, now=rospy.get_time())
-
-
+        # 10) Публикации
         self.pub_err.publish(float(err))
-        self.publish_cmd(speed, self.steer_filt, dt_pub)
+        self.publish_cmd(speed, self.steer_filt)
         self.last_ok_time = rospy.Time.now()
         self.last_cmd.speed = float(speed)
         self.last_cmd.steering_angle = float(self.steer_filt)
-        self.last_center_px = float(self.center_filt)
 
-     
+        # 11) Отладочный оверлей — всегда создаём dbg здесь
         dbg = cv2.cvtColor(mask_color, cv2.COLOR_GRAY2BGR)
-
-     
-        if forbid_band[0] is not None and forbid_band[1] is not None:
-            cv2.rectangle(dbg,
-                          (int(forbid_band[0]), 0),
-                          (int(forbid_band[1]), dbg.shape[0]-1),
-                          (0,128,255), 1)
-
-      
+        # показать игнорируемую центральную зону
+        cv2.rectangle(dbg,
+                      (int(cx_img - ignore), 0),
+                      (int(cx_img + ignore), mask_color.shape[0]-1),
+                      (0, 80, 0), 2)
+        # показать найденные центры
         for y_scan, cx in zip(used_y, centers):
             cv2.line(dbg, (int(cx), y_scan), (int(cx), max(0, y_scan-30)), (0, 0, 255), 2)
-
-      
         if used_fallback and lines_draw is not None:
-            dbg = cv2.addWeighted(dbg, 1.0, lines_draw, 0.7, 0.0)
+            dbg = cv2.addWeighted(dbg, 1.0, lines_draw, 0.8, 0.0)
 
-        
         cv2.line(dbg, (int(0.5*w), ys-5), (int(0.5*w), ys-55), (255, 0, 0), 1)
-
         txt = f"err={err:+.2f} de={de_f:+.2f} I={self.int_err:+.2f} hd={heading:+.2f} δ={self.steer_filt:+.2f} v={speed:.2f}"
-        cv2.putText(dbg, txt, (10, dbg.shape[0]-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
-
+        cv2.putText(dbg, txt, (10, dbg.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255),1, cv2.LINE_AA)
         self._publish_debug(dbg, w, h, y0)
+
 
 
     # ---------- detectors ----------
@@ -376,76 +341,50 @@ class VisionLKA:
         mask = cv2.medianBlur(mask, 5)
         return mask
 
-    def _scan_centers(self, mask, forbid_band=(None, None)):
+    def _scan_centers(self, mask):
 
         H, W = mask.shape[:2]
         centers, used_y = [], []
         lane_w = None
 
-        expect_w = float(self.last_lane_w_px) if self.last_lane_w_px is not None else None
-        seg_min = max(6.0, (expect_w or 0.4*W) * float(self.seg_min_frac))  # px
+        cx_img = 0.5 * W
+        ignore = int(W * float(rospy.get_param("~center_ignore_frac", 0.10)))
+        xL_max = int(cx_img - ignore)    
+        xR_min = int(cx_img + ignore)     
 
-        fb0, fb1 = forbid_band
-        center_forbid_lo = int((0.5 - self.center_reject_margin) * W)
-        center_forbid_hi = int((0.5 + self.center_reject_margin) * W)
-
-        def _forbidden(cx):
-            
-            if fb0 is not None and fb1 is not None and fb0 <= cx <= fb1:
-                return True
-            if center_forbid_lo <= cx <= center_forbid_hi:
-                return True
-            return False
+        lane_w_min = int(rospy.get_param("~lane_w_min_px", 90))
+        lane_w_max = int(rospy.get_param("~lane_w_max_px", 220))
 
         for r in self.scan_rows:
             y = int(H * float(r))
             y = 0 if y < 0 else H-1 if y >= H else y
-            row = (mask[y, :] > 0).astype(np.uint8)
+            row = mask[y, :]
 
-       
-            diff = np.diff(np.pad(row, (1,1), 'constant'))
-            starts = np.where(diff == 1)[0]
-            ends   = np.where(diff == -1)[0] - 1
-            segs = []
-            for s,e in zip(starts, ends):
-                if e >= s:
-                    wseg = e - s + 1
-                    cx   = 0.5 * (s + e)
-                    segs.append((s, e, wseg, cx))
-
-           
-            keep = []
-            for (s,e,wseg,cx) in segs:
-                if wseg < seg_min:
-                    continue
-                if _forbidden(cx):
-                    continue
-                keep.append((s,e,wseg,cx))
+        
+            left_idx = None
+            for x in range(xL_max-1, -1, -1):
+                if row[x] > 0:
+                    left_idx = x; break
 
             
-            left = right = None
-            if keep:
-                keep.sort(key=lambda t: t[3]) 
-                left  = keep[0]
-                right = keep[-1]
-                if right[3] <= left[3] + 1.0:
-                    
-                    right = None
+            right_idx = None
+            for x in range(xR_min, W):
+                if row[x] > 0:
+                    right_idx = x; break
 
-            
-            if left is not None and right is not None:
-                xl = 0.5*(left[0] + left[1])
-                xr = 0.5*(right[0] + right[1])
-                w_est = xr - xl
-                if w_est >= max(self.min_lane_w, seg_min):
-                    centers.append(0.5*(xl + xr)); used_y.append(y); lane_w = w_est
-            elif (left is not None or right is not None) and expect_w is not None:
+            if left_idx is not None and right_idx is not None:
+                w = right_idx - left_idx
+                if lane_w_min <= w <= lane_w_max:
+                    centers.append(0.5 * (left_idx + right_idx))
+                    used_y.append(y)
+                    lane_w = w
+            else:
                 
-                if left is not None:
-                    xl = 0.5*(left[0] + left[1]); xr = xl + expect_w
-                else:
-                    xr = 0.5*(right[0] + right[1]); xl = xr - expect_w
-                centers.append(0.5*(xl + xr)); used_y.append(y); lane_w = expect_w
+                if self.last_lane_w_px is not None:
+                    if left_idx is not None:
+                        centers.append(left_idx + 0.5 * self.last_lane_w_px); used_y.append(y)
+                    elif right_idx is not None:
+                        centers.append(right_idx - 0.5 * self.last_lane_w_px); used_y.append(y)
 
         return centers, used_y, lane_w
 
@@ -527,6 +466,24 @@ class VisionLKA:
         self.v_cmd = clamp(self.v_cmd + dv, 0.0, self.target_speed)
         self.prev_t_speed = now
         return self.v_cmd, dt
+            
+        def _apply_speed_limits(self, v_des, delta, dt):
+
+            a_acc = float(rospy.get_param("~a_accel_max", 0.4))
+            a_brk = float(rospy.get_param("~a_brake_max", 1.2))
+            a_lat_max = float(rospy.get_param("~a_lat_max", 1.2))
+            L = float(rospy.get_param("~wheelbase", 1.2))
+ 
+            tan_d = abs(math.tan(delta))
+            if tan_d > 1e-4:
+                v_lat_max = math.sqrt(max(0.0, a_lat_max * L / tan_d))
+                v_des = min(v_des, v_lat_max)
+
+            v_prev = float(getattr(self.last_cmd, "speed", 0.0))
+            dv = v_des - v_prev
+            dv_max = a_acc * dt if dv >= 0.0 else a_brk * dt
+            v_cmd = v_prev + clamp(dv, -abs(dv_max), abs(dv_max))
+            return v_cmd
             
 
 if __name__ == "__main__":

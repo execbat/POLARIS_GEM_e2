@@ -128,7 +128,7 @@
       <!-- speed profile -->
       <param name="target_speed"   value="0.5"/>
       <param name="min_speed"      value="0.2"/>
-      <param name="k_curve_speed"  value="2.0"/>
+      <param name="k_curve_speed"  value="0.3"/>
       <param name="steer_slowdown" value="0.15"/>
       <param name="recovery_speed" value="0.4"/>
       
