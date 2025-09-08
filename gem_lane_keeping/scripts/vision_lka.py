@@ -192,7 +192,17 @@ class VisionLKA:
         self.prev_delta = delta
 
         
-        steer_cmd = (1.0 - self.steer_alpha) * self.steer_filt + self.steer_alpha * (delta * self.steer_sign)
+        alpha = float(self.steer_alpha)
+        new_delta = delta * self.steer_sign
+
+        if alpha <= 0.0:              # сглаживание выключено -> сразу берём новое
+            steer_cmd = new_delta
+        elif alpha >= 1.0:            # 1.0 = без инерции (полный пропуск)
+            steer_cmd = new_delta
+        else:                         # 0 < alpha < 1: EMA, где alpha — доля НОВОГО
+            self.steer_filt = (1.0 - alpha) * self.steer_filt + alpha * new_delta
+            steer_cmd = self.steer_filt
+
         self.steer_filt = steer_cmd
 
         # Speed schedule 
