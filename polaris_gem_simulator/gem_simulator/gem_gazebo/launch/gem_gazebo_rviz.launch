@@ -102,80 +102,65 @@
 
 
 
-    <!-- Vision LKA: follow left solid yellow -->
+    <!-- Vision LKA (robust) -->
     <node pkg="gem_lane_keeping" type="vision_lka.py" name="vision_lka" output="screen" ns="/">
       <!-- camera -->
       <remap from="image" to="/gem/front_single_camera/image_raw"/>
-      <!-- safety stop (если есть свой топик — отремапь сюда) -->
-      <remap from="/gem/safety/stop" to="/gem/safety/stop"/>
-
-      <!-- where the controller publishes -->
-      <remap from="cmd"           to="/vision_lka/cmd"/>
+      <!-- publish directly to actuator topic -->
+      <remap from="cmd"   to="/gem/ackermann_cmd"/>
+      <!-- debug/error -->
       <remap from="debug"         to="/vision_lka/debug"/>
       <remap from="lateral_error" to="/vision_lka/lateral_error"/>
 
-      <!-- controller (PD + heading) -->
-      <param name="kp" value="0.035"/>
-      <param name="kd" value="0.10"/>
-      <param name="k_heading" value="0.12"/>
-      <param name="der_alpha" value="0.7"/>
+      <!-- control -->
+      <param name="kp" value="0.070"/>
+      <param name="kd" value="0.14"/>
+      <param name="k_heading" value="0.22"/>
+      <param name="der_alpha" value="0.5"/>
 
       <!-- steering shaping -->
-      <param name="steer_limit" value="0.75"/>
-      <param name="steer_rate_limit" value="1.4"/>
-      <param name="steer_alpha" value="0.22"/>
-      <param name="steer_sign" value="-1.0"/>  <!-- если рулит «наоборот», поставь 1.0 -->
+      <param name="steer_limit" value="0.90"/>
+      <param name="steer_rate_limit" value="4.0"/>
+      <param name="steer_alpha" value="0.10"/>
+      <param name="steer_sign" value="-1.0"/>     <!-- set to 1.0 if turns wrong way -->
       <param name="steer_bias" value="0.0"/>
 
-      <!-- speed & limits -->
-      <param name="target_speed" value="0.6"/>
+      <!-- speed & safety -->
+      <param name="target_speed" value="0.55"/>
       <param name="min_speed" value="0.30"/>
-      <param name="recovery_speed" value="0.45"/>
-      <param name="k_curve_speed" value="6.0"/>
-      <param name="steer_slowdown" value="0.20"/>
+      <param name="recovery_speed" value="0.40"/>
+      <param name="k_curve_speed" value="8.0"/>
+      <param name="steer_slowdown" value="0.22"/>
       <param name="wheelbase" value="1.2"/>
       <param name="a_accel_max" value="0.35"/>
-      <param name="a_brake_max" value="1.2"/>
-      <param name="a_lat_max" value="1.8"/>
+      <param name="a_brake_max" value="1.20"/>
+      <param name="a_lat_max" value="1.80"/>
 
       <!-- ROI & scans -->
       <param name="roi_top" value="0.58"/>
-      <param name="roi_top_boot" value="0.58"/>
-      <rosparam param="scan_rows">[0.75, 0.85, 0.93, 0.98]</rosparam>
+      <rosparam param="scan_rows">[0.75,0.85,0.93,0.98]</rosparam>
       <param name="min_valid_rows" value="2"/>
-      <param name="edge_min_run_px" value="14"/>
-      <param name="left_search_limit_frac" value="0.70"/>
-      <param name="hold_bad_ms" value="600"/>
+      <param name="edge_min_run_px" value="12"/>
+      <param name="hold_bad_ms" value="400"/>
       <param name="stop_if_lost" value="false"/>
 
-      <!-- target placement (between left line and camera center) -->
-      <param name="left_offset_px" value="-1.0"/>      <!-- -1 => использовать frac -->
-      <param name="left_to_center_frac" value="0.60"/> <!-- 0..1 к центру -->
-      <param name="center_margin_px" value="20"/>
-      <param name="min_offset_margin_px" value="20"/>
-      <param name="max_center_jump_frac" value="0.06"/>
-      <param name="lane_center_alpha" value="0.25"/>
-      <param name="cam_center_shift_px" value="0.0"/>  <!-- сдвиг оптики, если камера не по центру -->
+      <!-- desired lane position (fraction from left to right) -->
+      <param name="lane_pos_frac" value="0.60"/>     <!-- 0.5 center; 0.6 = slightly right of left border -->
+      <param name="center_alpha" value="0.25"/>
+      <param name="max_center_jump_frac" value="0.08"/>
+      <param name="cam_center_shift_px" value="0.0"/>
 
-      <!-- color for yellow + geometry gates (под твой скрин) -->
+      <!-- yellow thresholds & geometry gates -->
       <param name="yellow_h_lo"  value="18"/>
       <param name="yellow_h_hi"  value="42"/>
       <param name="yellow_s_min" value="80"/>
       <param name="yellow_v_min" value="28"/>
       <param name="lab_b_min"    value="145"/>
-      <param name="left_band_frac"     value="0.62"/>
+      <param name="left_band_frac"  value="0.62"/>
+      <param name="right_band_frac" value="0.62"/>
       <param name="center_ignore_frac" value="0.18"/>
       <param name="close_kernel" value="7"/>
       <param name="open_kernel"  value="5"/>
-
-      <!-- bootstrap (white-in-left-band) -->
-      <param name="bootstrap_enable" value="true"/>
-      <param name="bootstrap_frames_confirm" value="6"/>
-      <param name="bootstrap_speed_scale" value="0.75"/>
-      <param name="yellow_good_px_threshold" value="250"/>
-      <param name="s_thresh" value="110"/>
-      <param name="v_thresh" value="35"/>
-      <param name="hls_L_min" value="190"/>
     </node>
 
 
